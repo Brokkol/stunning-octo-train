@@ -7,6 +7,13 @@ services:
     restart: always
     expose:
       - "8080"
+    environment:
+      - MONGO_URI=mongodb://mongo:27017
+      - MONGO_DB=app_db
+      - REDIS_ADDR=redis:6379
+    depends_on:
+      - mongo
+      - redis
     networks:
       - app-network
 
@@ -23,6 +30,32 @@ services:
     networks:
       - app-network
 
+  mongo:
+    image: mongo:6.0
+    container_name: mongo_db
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - app-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis_cache
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - app-network
+
 networks:
   app-network:
     driver: bridge
+
+volumes:
+  mongo_data:
+  redis_data:

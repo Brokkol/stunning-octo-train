@@ -1,6 +1,12 @@
 cat < .gitignore
 .DS_Store
-main
+/bin
+/main
 *.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
 *.out
-EOF
+.env

@@ -1,16 +1,17 @@
-FROM golang:1.19-alpine AS builder
+FROM golang:1.27-alpine AS builder
 
 WORKDIR /app
 
-COPY go.mod ./
-RUN go mod download
-
+COPY go.mod go.sum ./
 COPY . .
-RUN CGO_ENABLED=O GOOS=linux go build -o main . 
+
+
+RUN go mod download
+RUN CGO_ENABLED=O GOOS=linux go build -o main ./cmd/app/main.go
 
 FROM alpine:latest
 
-WORKDIR /root/
+WORKDIR /app
 
 COPY --from=builder /app/main .
 
