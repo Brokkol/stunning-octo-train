@@ -2,77 +2,204 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 
+	"Go_project/internal/broker"
 	"Go_project/internal/domain"
 	"Go_project/internal/repository"
+	"Go_project/internal/storage"
+
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 func main() {
-	mongoURI := os.Getenv("MONGO_URI")
-	if mongoURI == "" {
-		mongoURI = "mongodb://localhost:27017"
-	}
-
-	mongoDBName := os.Getenv("MONGO_DB")
-	if mongoDBName == "" {
-		mongoDBName = "app_db"
-	}
-
-	redisAddr := os.Getenv("REDIS_ADDR")
-	if redisAddr == "" {
-		redisAddr = "localhost:6379"
-	}
-
-	// 1. Инициализация стораджа
-	storage, err := repository.NewStorage(mongoURI, mongoDBName, redisAddr)
+	db, err := repository.NewStorage(os.Getenv("MONGO_URI"), os.Getenv("MONGO_DB"), os.Getenv("REDIS_ADDR"))
 	if err != nil {
-		log.Fatalf("Failed to initialize storage: %v", err)
+		log.Fatal("MongoDB/Redis error: ", err)
 	}
 
-	userRepo := repository.NewMongoUserRepository(storage.MongoDB)
-	cacheRepo := repository.NewRedisCacheRepository(storage.RedisClient)
+	s3Client, err := storage.NewS3Client()
+	if err != nil {
+		log.Fatal("S3 error: ", err)
+	}
 
-	// 2. Хэндлер создания пользователя (MongoDB)
-	http.HandleFunc("/users", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			var u domain.User
-			if err := json.NewDecoder(r.Body).Decode(&u); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
+	rabbit, err := broker.NewRabbitMQ()
+	if err != nil {
+		log.Fatal("RabbitMQ error: ", err)
+	}
 
-			if err := userRepo.Create(&u); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
+	userRepo := repository.NewMongoUserRepository(db.MongoDB)
+	imageRepo := repository.NewMongoImageRepository(db.MongoDB)
+	cacheRepo := repository.NewRedisCacheRepository(db.RedisClient)
 
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(u)
+
+	http.HandleFunc("POST /users", func(w http.ResponseWriter, r *http.Request) {
+		var user domain.User
+		err := json.NewDecoder(r.Body).Decode(&user)
+		if err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
 			return
 		}
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	})
 
-	// 3. Хэндлер со счетчиком запросов (Redis)
-	http.HandleFunc("/hits", func(w http.ResponseWriter, r *http.Request) {
-		count, err := cacheRepo.IncrementCounter("api_hits")
+		err = userRepo.Create(&user)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"message":    "Page view counted",
-			"total_hits": count,
-		})
+		sendJSON(w, user)
+	})
+
+	http.HandleFunc("GET /users/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		cacheKey := "user:" + id
+
+		user, err := cacheRepo.GetUser(cacheKey)
+		if err == nil {
+			w.Header().Set("X-Cache", "HIT")
+			sendJSON(w, user)
+			return
+		}
+
+		user, err = userRepo.GetByID(id)
+		if err != nil {
+			http.Error(w, "user not found", http.StatusNotFound)
+			return
+		}
+
+		cacheRepo.SetUser(cacheKey, user)
+
+		w.Header().Set("X-Cache", "MISS")
+		sendJSON(w, user)
+	})
+
+	http.HandleFunc("GET /hits", func(w http.ResponseWriter, r *http.Request) {
+		count, err := cacheRepo.IncrementCounter("api_hits")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		sendJSON(w, map[string]int64{"total_hits": count})
+	})
+
+	http.HandleFunc("POST /images", func(w http.ResponseWriter, r *http.Request) {
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			http.Error(w, "send a file in the 'file' field", http.StatusBadRequest)
+			return
+		}
+		defer file.Close()
+
+		// Проверяем расширение файла
+		ext := strings.ToLower(filepath.Ext(header.Filename))
+		if ext != ".jpg" && ext != ".jpeg" && ext != ".png" {
+			http.Error(w, "only .jpg and .png are allowed", http.StatusBadRequest)
+			return
+		}
+
+		// Придумываем id и имя файла в S3
+		id := bson.NewObjectID().Hex()
+		image := domain.Image{
+			ID:          id,
+			OriginalKey: "originals/" + id + ext,
+			Status:      "pending",
+		}
+
+		// Кладём файл в S3
+		contentType := "image/jpeg"
+		if ext == ".png" {
+			contentType = "image/png"
+		}
+		err = s3Client.Upload(image.OriginalKey, file, contentType)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Сохраняем запись в MongoDB
+		err = imageRepo.Create(&image)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Отправляем задачу через RabbitMQ
+		task, _ := json.Marshal(domain.ImageTask{ImageID: id})
+		err = rabbit.Publish(task)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		sendJSON(w, image)
+	})
+
+	http.HandleFunc("GET /images", func(w http.ResponseWriter, r *http.Request) {
+		images, err := imageRepo.List()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		sendJSON(w, images)
+	})
+
+	// Узнать статус картинки
+	http.HandleFunc("GET /images/{id}", func(w http.ResponseWriter, r *http.Request) {
+		image, err := imageRepo.GetByID(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "image not found", http.StatusNotFound)
+			return
+		}
+		sendJSON(w, image)
+	})
+
+	// Скачать оригинал
+	http.HandleFunc("GET /images/{id}/original", func(w http.ResponseWriter, r *http.Request) {
+		image, err := imageRepo.GetByID(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "image not found", http.StatusNotFound)
+			return
+		}
+		sendFileFromS3(w, s3Client, image.OriginalKey)
+	})
+
+	// Скачать превью
+	http.HandleFunc("GET /images/{id}/thumbnail", func(w http.ResponseWriter, r *http.Request) {
+		image, err := imageRepo.GetByID(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "image not found", http.StatusNotFound)
+			return
+		}
+		if image.Status != "done" {
+			http.Error(w, "thumbnail is not ready, status: "+image.Status, http.StatusNotFound)
+			return
+		}
+		sendFileFromS3(w, s3Client, image.ThumbnailKey)
 	})
 
 	log.Println("Server running on port 8080...")
-	if err := http.ListenAndServe(":8080", nil); err != nil {
-		log.Fatal(err)
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
+// sendJSON превращает данные в JSON и отправляет клиенту
+func sendJSON(w http.ResponseWriter, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
+}
+
+// sendFileFromS3 скачивает файл из S3 и сразу отдаёт его клиенту
+func sendFileFromS3(w http.ResponseWriter, s3Client *storage.S3Client, key string) {
+	file, err := s3Client.Download(key)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
+	defer file.Close()
+
+	io.Copy(w, file)
 }

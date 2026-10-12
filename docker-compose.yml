@@ -11,9 +11,42 @@ services:
       - MONGO_URI=mongodb://mongo:27017
       - MONGO_DB=app_db
       - REDIS_ADDR=redis:6379
+      - S3_ENDPOINT=http://s3:8333
+      - S3_REGION=us-east-1
+      - S3_BUCKET=images
+      - AWS_ACCESS_KEY_ID=local
+      - AWS_SECRET_ACCESS_KEY=local
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
     depends_on:
       - mongo
       - redis
+      - s3
+      - rabbitmq
+    networks:
+      - app-network
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: go_worker
+    restart: always
+    command: ["./worker"]
+    environment:
+      - MONGO_URI=mongodb://mongo:27017
+      - MONGO_DB=app_db
+      - REDIS_ADDR=redis:6379
+      - S3_ENDPOINT=http://s3:8333
+      - S3_REGION=us-east-1
+      - S3_BUCKET=images
+      - AWS_ACCESS_KEY_ID=local
+      - AWS_SECRET_ACCESS_KEY=local
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+    depends_on:
+      - mongo
+      - redis
+      - s3
+      - rabbitmq
     networks:
       - app-network
 
@@ -52,6 +85,31 @@ services:
     networks:
       - app-network
 
+  s3:
+    image: chrislusf/seaweedfs
+    container_name: seaweed_s3
+    restart: always
+    command: server -dir=/data -s3 -s3.port=8333
+    ports:
+      - "8333:8333"   # S3 API
+      - "9333:9333"   # веб-страница статуса SeaweedFS
+    volumes:
+      - s3_data:/data
+    networks:
+      - app-network
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq_broker
+    restart: always
+    ports:
+      - "5672:5672"     # AMQP
+      - "15672:15672"   # веб-панель (guest / guest)
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - app-network
+
 networks:
   app-network:
     driver: bridge
@@ -59,3 +117,5 @@ networks:
 volumes:
   mongo_data:
   redis_data:
+  s3_data:
+  rabbitmq_data:
