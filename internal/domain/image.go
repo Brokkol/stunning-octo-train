@@ -11,5 +11,6 @@ type Image struct {
 
 // ImageTask - сообщение, которое API отправляет воркеру через RabbitMQ
 type ImageTask struct {
-	ImageID string `json:"image_id"`
+	ImageID   string `json:"image_id"`
+	RequestID string `json:"request_id"`
 }

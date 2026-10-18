@@ -9,6 +9,7 @@ import (
 	"image/jpeg"
 	_ "image/png" // чтобы Go умел читать PNG
 	"log"
+	"log/slog"
 	"os"
 
 	"Go_project/internal/broker"
@@ -20,6 +21,7 @@ import (
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	// Подключаемся так же, как в API
 	db, err := repository.NewStorage(os.Getenv("MONGO_URI"), os.Getenv("MONGO_DB"), os.Getenv("REDIS_ADDR"))
 	if err != nil {
@@ -50,13 +52,13 @@ func main() {
 		var task domain.ImageTask
 		json.Unmarshal(msg.Body, &task)
 
-		log.Println("Got task for image", task.ImageID)
+		slog.Info("processing", "request_id", task.RequestID, "image_id", task.ImageID)
 
 		err := makeThumbnail(s3Client, imageRepo, task.ImageID)
 		if err != nil {
-			log.Println("Failed:", err)
+			slog.Error("failed", "request_id", task.RequestID, "image_id", task.ImageID, "error", err)
 		} else {
-			log.Println("Done:", task.ImageID)
+			slog.Info("done", "request_id", task.RequestID, "image_id", task.ImageID)
 		}
 
 		// Говорим RabbitMQ, что задача обработана и её можно удалить из очереди

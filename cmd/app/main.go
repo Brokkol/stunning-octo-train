@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"Go_project/internal/broker"
 	"Go_project/internal/domain"
@@ -18,6 +20,7 @@ import (
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	db, err := repository.NewStorage(os.Getenv("MONGO_URI"), os.Getenv("MONGO_DB"), os.Getenv("REDIS_ADDR"))
 	if err != nil {
 		log.Fatal("MongoDB/Redis error: ", err)
@@ -36,7 +39,6 @@ func main() {
 	userRepo := repository.NewMongoUserRepository(db.MongoDB)
 	imageRepo := repository.NewMongoImageRepository(db.MongoDB)
 	cacheRepo := repository.NewRedisCacheRepository(db.RedisClient)
-
 
 	http.HandleFunc("POST /users", func(w http.ResponseWriter, r *http.Request) {
 		var user domain.User
@@ -129,7 +131,7 @@ func main() {
 		}
 
 		// Отправляем задачу через RabbitMQ
-		task, _ := json.Marshal(domain.ImageTask{ImageID: id})
+		task, _ := json.Marshal(domain.ImageTask{ImageID: id, RequestID: r.Header.Get("X-Request-ID")})
 		err = rabbit.Publish(task)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -183,7 +185,32 @@ func main() {
 	})
 
 	log.Println("Server running on port 8080...")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Fatal(http.ListenAndServe(":8080", Logs(http.DefaultServeMux)))
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	s.status = code
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func Logs(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := r.Header.Get("X-Request-ID")
+		if requestID == "" {
+			requestID = bson.NewObjectID().Hex()
+		}
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: 200}
+		w.Header().Set("X-Request-ID", requestID)
+		r.Header.Set("X-Request-ID", requestID)
+		next.ServeHTTP(rec, r)
+		slog.Info("request", "request_id", requestID, "method", r.Method, "path", r.URL.Path, "duration_ms", time.Since(start).Milliseconds(), "status", rec.status, "ip", r.Header.Get("X-Real-IP"))
+	})
 }
 
 // sendJSON превращает данные в JSON и отправляет клиенту
