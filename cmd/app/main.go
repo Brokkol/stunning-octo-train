@@ -2,12 +2,15 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"io"
 	"log"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +19,7 @@ import (
 	"Go_project/internal/repository"
 	"Go_project/internal/storage"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
@@ -183,7 +187,7 @@ func main() {
 		}
 		sendFileFromS3(w, s3Client, image.ThumbnailKey)
 	})
-
+	http.Handle("GET /metrics", promhttp.Handler())
 	log.Println("Server running on port 8080...")
 	log.Fatal(http.ListenAndServe(":8080", Logs(http.DefaultServeMux)))
 }
@@ -198,6 +202,17 @@ func (s *statusRecorder) WriteHeader(code int) {
 	s.ResponseWriter.WriteHeader(code)
 }
 
+var httpRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "http_requests_total",
+	Help: "Сколько запросов обработано",
+}, []string{"route", "status"})
+
+var httpDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+	Name:    "http_request_duration_seconds",
+	Help:    "Сколько секунд занял запрос",
+	Buckets: prometheus.DefBuckets,
+}, []string{"route"})
+
 func Logs(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestID := r.Header.Get("X-Request-ID")
@@ -209,6 +224,12 @@ func Logs(next http.Handler) http.Handler {
 		w.Header().Set("X-Request-ID", requestID)
 		r.Header.Set("X-Request-ID", requestID)
 		next.ServeHTTP(rec, r)
+		route := r.Pattern
+		if route == "" {
+			route = "unmatched"
+		}
+		httpRequests.WithLabelValues(route, strconv.Itoa(rec.status)).Inc()
+		httpDuration.WithLabelValues(route).Observe(time.Since(start).Seconds())
 		slog.Info("request", "request_id", requestID, "method", r.Method, "path", r.URL.Path, "duration_ms", time.Since(start).Milliseconds(), "status", rec.status, "ip", r.Header.Get("X-Real-IP"))
 	})
 }

@@ -7,10 +7,15 @@ import (
 	"encoding/json"
 	"image"
 	"image/jpeg"
-	_ "image/png" // чтобы Go умел читать PNG
+	_ "image/png"
 	"log"
 	"log/slog"
+	"net/http"
 	"os"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"time"
 
 	"Go_project/internal/broker"
 	"Go_project/internal/domain"
@@ -20,8 +25,25 @@ import (
 	"golang.org/x/image/draw"
 )
 
+var thumbsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "thumbnails_total",
+	Help: "Сколько миниатюр обработано",
+}, []string{"result"})
+
+var thumbDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+	Name:    "thumbnail_duration_seconds",
+	Help:    "Сколько секунд делается миниатюра",
+	Buckets: prometheus.DefBuckets,
+})
+
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	go func() {
+		http.Handle("/metrics", promhttp.Handler())
+		log.Fatal(http.ListenAndServe(":2112", nil))
+	}()
+	thumbsTotal.WithLabelValues("done").Add(0)
+	thumbsTotal.WithLabelValues("failed").Add(0)
 	// Подключаемся так же, как в API
 	db, err := repository.NewStorage(os.Getenv("MONGO_URI"), os.Getenv("MONGO_DB"), os.Getenv("REDIS_ADDR"))
 	if err != nil {
@@ -54,10 +76,15 @@ func main() {
 
 		slog.Info("processing", "request_id", task.RequestID, "image_id", task.ImageID)
 
+		start := time.Now()
 		err := makeThumbnail(s3Client, imageRepo, task.ImageID)
+		thumbDuration.Observe(time.Since(start).Seconds())
+
 		if err != nil {
+			thumbsTotal.WithLabelValues("failed").Inc()
 			slog.Error("failed", "request_id", task.RequestID, "image_id", task.ImageID, "error", err)
 		} else {
+			thumbsTotal.WithLabelValues("done").Inc()
 			slog.Info("done", "request_id", task.RequestID, "image_id", task.ImageID)
 		}
 

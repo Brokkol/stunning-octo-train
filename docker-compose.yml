@@ -109,7 +109,30 @@ services:
       - rabbitmq_data:/var/lib/rabbitmq
     networks:
       - app-network
+  
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - app-network
 
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - app-network
 networks:
   app-network:
     driver: bridge
@@ -119,3 +142,5 @@ volumes:
   redis_data:
   s3_data:
   rabbitmq_data:
+  prometheus_data:
+  grafana_data:
