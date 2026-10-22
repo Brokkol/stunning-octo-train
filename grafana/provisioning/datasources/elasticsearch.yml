@@ -1,0 +1,14 @@
+apiVersion: 1
+
+datasources:
+  - name: Elasticsearch
+    uid: elasticsearch
+    type: elasticsearch
+    access: proxy
+    url: http://elasticsearch:9200
+    editable: false
+    jsonData:
+      index: "logs-*"
+      timeField: "timestamp"
+      logMessageField: "msg"
+      logLevelField: "level.keyword"
