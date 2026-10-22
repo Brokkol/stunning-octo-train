@@ -1,0 +1,40 @@
+sources:
+  docker:
+    type: docker_logs
+    include_containers: ["go_app", "go_worker"]
+
+transforms:
+  parse:
+    type: remap
+    inputs: ["docker"]
+    source: |
+      parsed, err = parse_json(.message)
+      if err == null {
+        . = merge(., object!(parsed))
+      }
+      del(.label)
+
+sinks:
+  s3:
+    type: aws_s3
+    inputs: ["parse"]
+    bucket: logs
+    endpoint: http://s3:8333
+    region: us-east-1
+    auth:
+      access_key_id: local
+      secret_access_key: local
+    key_prefix: "year=%Y/month=%m/day=%d/hour=%H/"
+    filename_extension: json
+    compression: none
+    encoding:
+      codec: json
+    batch:
+      timeout_secs: 60
+  logstash:
+    type: socket
+    inputs: ["parse"]
+    mode: tcp
+    address: "logstash:5044"
+    encoding:
+      codec: json
