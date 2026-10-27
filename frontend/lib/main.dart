@@ -4,6 +4,9 @@ import 'dart:async';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/foundation.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 void main() {
   runApp(const MyApp());
@@ -35,24 +38,37 @@ class MyHomePage extends StatefulWidget {
 class _MyHomePageState extends State<MyHomePage> {
   List<dynamic> _images = [];
   Timer? _timer;
+  String _baseUrl = '';
+
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString('base_url') ?? '';
+    if (!mounted) return;
+    setState(() => _baseUrl = saved);
+    await _askNetworkPermission();
+  }
+
+  Future<void> _askNetworkPermission() async {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      await Permission.accessLocalNetwork.request();
+    }
+  }
 
   Future<void> _uploadImage() async {
     final file = await FilePicker.pickFile(type: FileType.image);
     if (file == null) return; // отменил выбор
 
     final bytes = await file.readAsBytes();
-
+    if (_baseUrl.isEmpty) return;
     final request = http.MultipartRequest(
       'POST',
-      Uri.parse('http://localhost:80/images'),
+      Uri.parse('$_baseUrl/images'),
     );
     request.files.add(
       http.MultipartFile.fromBytes('file', bytes, filename: file.name),
     );
 
     final response = await request.send();
-    print(response.statusCode);
-    print(await response.stream.bytesToString());
 
     if (response.statusCode == 200 || response.statusCode == 201) {
       _loadImages();
@@ -62,7 +78,7 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void initState() {
     super.initState();
-    _loadImages();
+    _loadSettings().then((_) => _loadImages());
     _timer = Timer.periodic(const Duration(seconds: 3), (_) => _loadImages());
   }
 
@@ -73,13 +89,44 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Future<void> _loadImages() async {
-    final response = await http.get(Uri.parse('http://localhost:80/images'));
+    if (_baseUrl.isEmpty) return;
+
+    final response = await http.get(Uri.parse('$_baseUrl/images'));
     final data = jsonDecode(response.body);
     if (!mounted) return;
     setState(() {
       _images = data ?? [];
     });
   }
+
+  Future<void> _editServer() async {
+  final controller = TextEditingController(text: _baseUrl);
+  final result = await showDialog<String>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Server address'),
+      content: TextField(
+        controller: controller,
+        decoration: const InputDecoration(hintText: 'http://192.168.68.54'),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+          child: const Text('Save'),
+        ),
+      ],
+    ),
+  );
+  if (result == null) return; // нажал Cancel
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString('base_url', result);
+  setState(() => _baseUrl = result);
+  _loadImages();
+}
 
   @override
   Widget build(BuildContext context) {
@@ -88,6 +135,9 @@ class _MyHomePageState extends State<MyHomePage> {
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
 
         title: Text(widget.title),
+        actions: [
+          IconButton(icon: const Icon(Icons.settings), onPressed: _editServer),
+        ],
       ),
       body: _images.isEmpty
           ? const Center(
@@ -102,7 +152,7 @@ class _MyHomePageState extends State<MyHomePage> {
                 final img = _images[i];
                 if (img['status'] == 'done') {
                   return Image.network(
-                    'http://localhost:80/images/${img['id']}/thumbnail',
+                    '$_baseUrl/images/${img['id']}/thumbnail',
                     fit: BoxFit.cover,
                   );
                 } else {
