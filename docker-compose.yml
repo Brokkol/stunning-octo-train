@@ -289,6 +289,18 @@ services:
 
 
 
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    restart: always
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+    depends_on:
+      - nginx
+    networks:
+      - app-network
+
 networks:
   app-network:
     driver: bridge

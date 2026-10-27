@@ -8,6 +8,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+const _cfId = String.fromEnvironment('CF_ID');
+const _cfSecret = String.fromEnvironment('CF_SECRET');
+const _defaultBaseUrl = String.fromEnvironment('BASE_URL');
+
+
+const _authHeaders = {
+  'CF-Access-Client-Id': _cfId,
+  'CF-Access-Client-Secret': _cfSecret,
+};
+
 void main() {
   runApp(const MyApp());
 }
@@ -42,7 +52,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString('base_url') ?? '';
+    final saved = prefs.getString('base_url') ?? _defaultBaseUrl;
     if (!mounted) return;
     setState(() => _baseUrl = saved);
     await _askNetworkPermission();
@@ -55,23 +65,29 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Future<void> _uploadImage() async {
+    if (_baseUrl.isEmpty) return;
     final file = await FilePicker.pickFile(type: FileType.image);
     if (file == null) return; // отменил выбор
 
     final bytes = await file.readAsBytes();
-    if (_baseUrl.isEmpty) return;
     final request = http.MultipartRequest(
       'POST',
       Uri.parse('$_baseUrl/images'),
     );
+    request.headers.addAll(_authHeaders);
     request.files.add(
       http.MultipartFile.fromBytes('file', bytes, filename: file.name),
     );
 
-    final response = await request.send();
-
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      _loadImages();
+    try {
+      final response = await request.send();
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        _loadImages();
+      } else {
+        debugPrint('upload failed: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('upload error: $e');
     }
   }
 
@@ -91,42 +107,54 @@ class _MyHomePageState extends State<MyHomePage> {
   Future<void> _loadImages() async {
     if (_baseUrl.isEmpty) return;
 
-    final response = await http.get(Uri.parse('$_baseUrl/images'));
-    final data = jsonDecode(response.body);
-    if (!mounted) return;
-    setState(() {
-      _images = data ?? [];
-    });
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/images'),
+        headers: _authHeaders,
+      );
+      if (response.statusCode != 200) {
+        debugPrint('load failed: ${response.statusCode}');
+        return;
+      }
+      final data = jsonDecode(response.body);
+      if (!mounted) return;
+      setState(() {
+        _images = data ?? [];
+      });
+    } catch (e) {
+      debugPrint('load error: $e');
+    }
   }
 
   Future<void> _editServer() async {
-  final controller = TextEditingController(text: _baseUrl);
-  final result = await showDialog<String>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      title: const Text('Server address'),
-      content: TextField(
-        controller: controller,
-        decoration: const InputDecoration(hintText: 'http://192.168.68.54'),
+    final controller = TextEditingController(text: _baseUrl);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Server address'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(hintText: 'https://your-server.example'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(ctx),
-          child: const Text('Cancel'),
-        ),
-        TextButton(
-          onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-          child: const Text('Save'),
-        ),
-      ],
-    ),
-  );
-  if (result == null) return; // нажал Cancel
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.setString('base_url', result);
-  setState(() => _baseUrl = result);
-  _loadImages();
-}
+    );
+    if (result == null) return; // нажал Cancel
+    final url = result.replaceAll(RegExp(r'/+$'), '');
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('base_url', url);
+    setState(() => _baseUrl = url);
+    _loadImages();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -153,6 +181,7 @@ class _MyHomePageState extends State<MyHomePage> {
                 if (img['status'] == 'done') {
                   return Image.network(
                     '$_baseUrl/images/${img['id']}/thumbnail',
+                    headers: _authHeaders,
                     fit: BoxFit.cover,
                   );
                 } else {
