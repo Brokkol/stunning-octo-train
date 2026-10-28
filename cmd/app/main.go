@@ -103,8 +103,8 @@ func main() {
 
 		// Проверяем расширение файла
 		ext := strings.ToLower(filepath.Ext(header.Filename))
-		if ext != ".jpg" && ext != ".jpeg" && ext != ".png" {
-			http.Error(w, "only .jpg and .png are allowed", http.StatusBadRequest)
+		if ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".heic" && ext != ".heif" {
+			http.Error(w, "only .jpg, .png, .heic and .heif are allowed", http.StatusBadRequest)
 			return
 		}
 
@@ -120,6 +120,9 @@ func main() {
 		contentType := "image/jpeg"
 		if ext == ".png" {
 			contentType = "image/png"
+		}
+		if ext == ".heic" || ext != ".heif"{
+			contentType = "image/heic"
 		}
 		err = s3Client.Upload(image.OriginalKey, file, contentType)
 		if err != nil {

@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/jpeg"
 	_ "image/png"
+	_ "github.com/gen2brain/heic"
 	"log"
 	"log/slog"
 	"net/http"
