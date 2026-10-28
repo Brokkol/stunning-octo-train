@@ -12,7 +12,6 @@ const _cfId = String.fromEnvironment('CF_ID');
 const _cfSecret = String.fromEnvironment('CF_SECRET');
 const _defaultBaseUrl = String.fromEnvironment('BASE_URL');
 
-
 const _authHeaders = {
   'CF-Access-Client-Id': _cfId,
   'CF-Access-Client-Secret': _cfSecret,
@@ -50,9 +49,16 @@ class _MyHomePageState extends State<MyHomePage> {
   Timer? _timer;
   String _baseUrl = '';
 
+  Map<String, String> get _headers =>
+      (!kIsWeb && _baseUrl.startsWith('https')) ? _authHeaders : const {};
+
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString('base_url') ?? _defaultBaseUrl;
+    final saved = (kIsWeb && kReleaseMode)
+        ? Uri
+              .base
+              .origin // сайт открыт с того же домена, что и API
+        : (prefs.getString('base_url') ?? _defaultBaseUrl);
     if (!mounted) return;
     setState(() => _baseUrl = saved);
     await _askNetworkPermission();
@@ -74,7 +80,7 @@ class _MyHomePageState extends State<MyHomePage> {
       'POST',
       Uri.parse('$_baseUrl/images'),
     );
-    request.headers.addAll(_authHeaders);
+    request.headers.addAll(_headers);
     request.files.add(
       http.MultipartFile.fromBytes('file', bytes, filename: file.name),
     );
@@ -110,7 +116,7 @@ class _MyHomePageState extends State<MyHomePage> {
     try {
       final response = await http.get(
         Uri.parse('$_baseUrl/images'),
-        headers: _authHeaders,
+        headers: _headers,
       );
       if (response.statusCode != 200) {
         debugPrint('load failed: ${response.statusCode}');
@@ -134,7 +140,9 @@ class _MyHomePageState extends State<MyHomePage> {
         title: const Text('Server address'),
         content: TextField(
           controller: controller,
-          decoration: const InputDecoration(hintText: 'https://your-server.example'),
+          decoration: const InputDecoration(
+            hintText: 'https://your-server.example',
+          ),
         ),
         actions: [
           TextButton(
@@ -181,7 +189,7 @@ class _MyHomePageState extends State<MyHomePage> {
                 if (img['status'] == 'done') {
                   return Image.network(
                     '$_baseUrl/images/${img['id']}/thumbnail',
-                    headers: _authHeaders,
+                    headers: _headers,
                     fit: BoxFit.cover,
                   );
                 } else {
