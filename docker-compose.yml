@@ -235,6 +235,10 @@ services:
     container_name: node_exporter
     networks:
       - app-network
+    command:
+      - --mongodb.uri=mongodb://mongo:27017
+      - --collect-all
+      - --compatible-mode
   
   vector:
     image: timberio/vector:0.43.1-alpine
