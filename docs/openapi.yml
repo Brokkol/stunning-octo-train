@@ -1,0 +1,216 @@
+openapi: 3.0.3
+info:
+  title: Mini Imgur API
+  description: Загрузка картинок, превью и пользователи
+  version: 1.0.0
+servers:
+  - url: /
+
+paths:
+  /users:
+    post:
+      tags: [users]
+      summary: Создать пользователя
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserInput'
+      responses:
+        '200':
+          description: Созданный пользователь
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Некорректный JSON
+
+  /users/{id}:
+    get:
+      tags: [users]
+      summary: Получить пользователя (с кэшем Redis на 10 минут)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Пользователь. Заголовок X-Cache показывает HIT (из Redis) или MISS (из Mongo)
+          headers:
+            X-Cache:
+              schema:
+                type: string
+                enum: [HIT, MISS]
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: Пользователь не найден
+
+  /hits:
+    get:
+      tags: [system]
+      summary: Счётчик обращений (хранится в Redis)
+      responses:
+        '200':
+          description: Сколько раз вызывали этот адрес
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_hits:
+                    type: integer
+                    format: int64
+
+  /images:
+    post:
+      tags: [images]
+      summary: Загрузить картинку (jpg, png, heic, heif)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Запись о картинке. Статус pending, пока worker делает превью
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Image'
+        '400':
+          description: Нет файла или недопустимое расширение
+    get:
+      tags: [images]
+      summary: Список всех картинок, новые сверху
+      responses:
+        '200':
+          description: Список картинок
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Image'
+
+  /images/{id}:
+    get:
+      tags: [images]
+      summary: Данные одной картинки
+      parameters:
+        - $ref: '#/components/parameters/ImageId'
+      responses:
+        '200':
+          description: Запись о картинке
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Image'
+        '404':
+          description: Картинка не найдена
+
+  /images/{id}/original:
+    get:
+      tags: [images]
+      summary: Скачать оригинал (с исходным именем файла)
+      parameters:
+        - $ref: '#/components/parameters/ImageId'
+      responses:
+        '200':
+          description: Файл оригинала (в заголовке Content-Disposition имя файла)
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Картинка не найдена
+
+  /images/{id}/thumbnail:
+    get:
+      tags: [images]
+      summary: Превью JPEG (длинная сторона 300 px)
+      parameters:
+        - $ref: '#/components/parameters/ImageId'
+      responses:
+        '200':
+          description: JPEG
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Картинки нет или превью ещё не готово
+
+  /images/{id}/view:
+    get:
+      tags: [images]
+      summary: JPEG для просмотра (длинная сторона до 1600 px)
+      parameters:
+        - $ref: '#/components/parameters/ImageId'
+      responses:
+        '200':
+          description: JPEG
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Картинки нет или версия ещё не готова
+
+components:
+  parameters:
+    ImageId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+  schemas:
+    UserInput:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+    Image:
+      type: object
+      properties:
+        id:
+          type: string
+        filename:
+          type: string
+          description: Исходное имя файла
+        original_key:
+          type: string
+        thumbnail_key:
+          type: string
+        view_key:
+          type: string
+        status:
+          type: string
+          enum: [pending, done, failed]

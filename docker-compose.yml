@@ -84,6 +84,18 @@ services:
     networks:
       - app-network
 
+  swagger-ui:
+    image: swaggerapi/swagger-ui
+    container_name: swagger_ui
+    restart: always
+    environment:
+      - BASE_URL=/swagger
+      - SWAGGER_JSON=/spec/openapi.yml
+    volumes:
+      - ./docs/openapi.yml:/spec/openapi.yml:ro
+    networks:
+      - app-network
+
   mongo:
     image: mongo:6.0
     container_name: mongo_db
