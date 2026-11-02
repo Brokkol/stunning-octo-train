@@ -5,7 +5,9 @@ package domain
 type Image struct {
 	ID           string `json:"id" bson:"_id"`
 	OriginalKey  string `json:"original_key" bson:"original_key"`
+	Filename     string `json:"filename" bson:"filename"`
 	ThumbnailKey string `json:"thumbnail_key" bson:"thumbnail_key"`
+	ViewKey      string `json:"view_key" bson:"view_key"`
 	Status       string `json:"status" bson:"status"` // "pending", "done" или "failed"
 }
 

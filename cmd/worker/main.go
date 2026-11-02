@@ -5,17 +5,17 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	_ "github.com/gen2brain/heic"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"image"
 	"image/jpeg"
 	_ "image/png"
-	_ "github.com/gen2brain/heic"
 	"log"
 	"log/slog"
 	"net/http"
 	"os"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"time"
 
 	"Go_project/internal/broker"
@@ -94,6 +94,29 @@ func main() {
 	}
 }
 
+// resizeJPEG уменьшает картинку так, чтобы длинная сторона была не больше maxSide,
+// и возвращает готовый JPEG. Маленькие картинки не увеличиваются.
+func resizeJPEG(src image.Image, maxSide int) ([]byte, error) {
+	w, h := src.Bounds().Dx(), src.Bounds().Dy()
+	if w > maxSide || h > maxSide {
+		if w >= h {
+			h = h * maxSide / w
+			w = maxSide
+		} else {
+			w = w * maxSide / h
+			h = maxSide
+		}
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+	draw.CatmullRom.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Over, nil)
+
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 85}); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 func makeThumbnail(s3Client *storage.S3Client, imageRepo *repository.MongoImageRepository, imageID string) error {
 	// 1. Находим запись о картинке в MongoDB
 	img, err := imageRepo.GetByID(imageID)
@@ -116,27 +139,29 @@ func makeThumbnail(s3Client *storage.S3Client, imageRepo *repository.MongoImageR
 		return err
 	}
 
-	// 4. Уменьшаем до ширины 300 пикселей (высоту считаем по пропорции)
-	width := 300
-	height := original.Bounds().Dy() * width / original.Bounds().Dx()
-	thumbnail := image.NewRGBA(image.Rect(0, 0, width, height))
-	draw.CatmullRom.Scale(thumbnail, thumbnail.Bounds(), original, original.Bounds(), draw.Over, nil)
-
-	// 5. Превращаем превью в JPEG
-	var buf bytes.Buffer
-	err = jpeg.Encode(&buf, thumbnail, nil)
+		// 4. Делаем две JPEG-версии: превью (300) и для просмотра (1600)
+	thumbBytes, err := resizeJPEG(original, 300)
+	if err != nil {
+		return err
+	}
+	viewBytes, err := resizeJPEG(original, 1600)
 	if err != nil {
 		return err
 	}
 
-	// 6. Кладём превью в S3
+	// 5. Кладём обе в S3
 	img.ThumbnailKey = "thumbnails/" + img.ID + ".jpg"
-	err = s3Client.Upload(img.ThumbnailKey, bytes.NewReader(buf.Bytes()), "image/jpeg")
+	err = s3Client.Upload(img.ThumbnailKey, bytes.NewReader(thumbBytes), "image/jpeg")
+	if err != nil {
+		return err
+	}
+	img.ViewKey = "views/" + img.ID + ".jpg"
+	err = s3Client.Upload(img.ViewKey, bytes.NewReader(viewBytes), "image/jpeg")
 	if err != nil {
 		return err
 	}
 
-	// 7. Обновляем статус в MongoDB
+	// 6. Обновляем статус в MongoDB
 	img.Status = "done"
 	return imageRepo.Update(img)
 }

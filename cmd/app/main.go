@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"mime"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -112,6 +113,7 @@ func main() {
 		id := bson.NewObjectID().Hex()
 		image := domain.Image{
 			ID:          id,
+			Filename:    header.Filename,
 			OriginalKey: "originals/" + id + ext,
 			Status:      "pending",
 		}
@@ -121,7 +123,7 @@ func main() {
 		if ext == ".png" {
 			contentType = "image/png"
 		}
-		if ext == ".heic" || ext != ".heif"{
+		if ext == ".heic" || ext == ".heif" {
 			contentType = "image/heic"
 		}
 		err = s3Client.Upload(image.OriginalKey, file, contentType)
@@ -174,6 +176,11 @@ func main() {
 			http.Error(w, "image not found", http.StatusNotFound)
 			return
 		}
+		name := image.Filename
+		if name == "" {
+			name = filepath.Base(image.OriginalKey) // для старых записей: <id>.heic
+		}
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
 		sendFileFromS3(w, s3Client, image.OriginalKey)
 	})
 
@@ -190,6 +197,21 @@ func main() {
 		}
 		sendFileFromS3(w, s3Client, image.ThumbnailKey)
 	})
+
+	// Версия для просмотра (JPEG до 1600 px)
+	http.HandleFunc("GET /images/{id}/view", func(w http.ResponseWriter, r *http.Request) {
+		image, err := imageRepo.GetByID(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "image not found", http.StatusNotFound)
+			return
+		}
+		if image.Status != "done" || image.ViewKey == "" {
+			http.Error(w, "view is not ready", http.StatusNotFound)
+			return
+		}
+		sendFileFromS3(w, s3Client, image.ViewKey)
+	})
+
 	http.Handle("GET /metrics", promhttp.Handler())
 	log.Println("Server running on port 8080...")
 	log.Fatal(http.ListenAndServe(":8080", Logs(http.DefaultServeMux)))

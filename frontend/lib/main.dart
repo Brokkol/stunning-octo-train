@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 const _cfId = String.fromEnvironment('CF_ID');
 const _cfSecret = String.fromEnvironment('CF_SECRET');
@@ -42,6 +43,30 @@ class MyHomePage extends StatefulWidget {
 
   @override
   State<MyHomePage> createState() => _MyHomePageState();
+}
+
+class ImageViewer extends StatelessWidget {
+  final String url;
+  final Map<String, String> headers;
+  const ImageViewer({super.key, required this.url, required this.headers});
+
+  @override
+  Widget build(BuildContext context) {
+    return InteractiveViewer(
+      child: Image.network(
+        url,
+        headers: headers,
+        fit: BoxFit.contain,
+        loadingBuilder: (context, child, progress) {
+          if (progress == null) return child;
+          return const Center(child: CircularProgressIndicator());
+        },
+        errorBuilder: (context, error, stack) => const Center(
+          child: Text('Не удалось показать оригинал (возможно, HEIC)'),
+        ),
+      ),
+    );
+  }
 }
 
 class _MyHomePageState extends State<MyHomePage> {
@@ -132,6 +157,64 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
+  void _openImage(dynamic img) {
+    final url = '$_baseUrl/images/${img['id']}/view';
+    final viewer = ImageViewer(url: url, headers: _headers);
+    final wide = MediaQuery.of(context).size.width > 600;
+
+    if (wide) {
+      showDialog(
+        context: context,
+        builder: (ctx) => Dialog(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 900, maxHeight: 700),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.download),
+                      tooltip: 'Скачать оригинал',
+                      onPressed: () => _downloadOriginal(img),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                  ],
+                ),
+                Expanded(child: viewer),
+              ],
+            ),
+          ),
+        ),
+      );
+    } else {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => Scaffold(
+            appBar: AppBar(
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.download),
+                  onPressed: () => _downloadOriginal(img),
+                ),
+              ],
+            ),
+            body: viewer,
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _downloadOriginal(dynamic img) async {
+    final url = Uri.parse('$_baseUrl/images/${img['id']}/original');
+    await launchUrl(url, mode: LaunchMode.externalApplication);
+  }
+
   Future<void> _editServer() async {
     final controller = TextEditingController(text: _baseUrl);
     final result = await showDialog<String>(
@@ -187,10 +270,13 @@ class _MyHomePageState extends State<MyHomePage> {
               itemBuilder: (context, i) {
                 final img = _images[i];
                 if (img['status'] == 'done') {
-                  return Image.network(
-                    '$_baseUrl/images/${img['id']}/thumbnail',
-                    headers: _headers,
-                    fit: BoxFit.cover,
+                  return GestureDetector(
+                    onTap: () => _openImage(img),
+                    child: Image.network(
+                      '$_baseUrl/images/${img['id']}/thumbnail',
+                      headers: _headers,
+                      fit: BoxFit.cover,
+                    ),
                   );
                 } else {
                   return ListTile(
