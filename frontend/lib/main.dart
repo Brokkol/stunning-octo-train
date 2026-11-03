@@ -8,6 +8,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+
+import 'firebase_options.dart';
 
 const _cfId = String.fromEnvironment('CF_ID');
 const _cfSecret = String.fromEnvironment('CF_SECRET');
@@ -18,7 +22,9 @@ const _authHeaders = {
   'CF-Access-Client-Secret': _cfSecret,
 };
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(const MyApp());
 }
 
@@ -71,6 +77,8 @@ class ImageViewer extends StatelessWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   List<dynamic> _images = [];
+  User? _user;
+  StreamSubscription<User?>? _authSub;
   Timer? _timer;
   String _baseUrl = '';
 
@@ -125,6 +133,9 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void initState() {
     super.initState();
+    _authSub = FirebaseAuth.instance.authStateChanges().listen((u) {
+      setState(() => _user = u);
+    });
     _loadSettings().then((_) => _loadImages());
     _timer = Timer.periodic(const Duration(seconds: 3), (_) => _loadImages());
   }
@@ -132,6 +143,7 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void dispose() {
     _timer?.cancel();
+    _authSub?.cancel();
     super.dispose();
   }
 
@@ -154,6 +166,19 @@ class _MyHomePageState extends State<MyHomePage> {
       });
     } catch (e) {
       debugPrint('load error: $e');
+    }
+  }
+
+  Future<void> _signIn() async {
+    final provider = GoogleAuthProvider();
+    try {
+      if (kIsWeb) {
+        await FirebaseAuth.instance.signInWithPopup(provider);
+      } else {
+        await FirebaseAuth.instance.signInWithProvider(provider);
+      }
+    } catch (e) {
+      debugPrint('sign in error: $e');
     }
   }
 
@@ -287,6 +312,18 @@ class _MyHomePageState extends State<MyHomePage> {
 
   @override
   Widget build(BuildContext context) {
+    if (_user == null) {
+      return Scaffold(
+        appBar: AppBar(title: Text(widget.title)),
+        body: Center(
+          child: FilledButton.icon(
+            icon: const Icon(Icons.login),
+            label: const Text('Войти через Google'),
+            onPressed: _signIn,
+          ),
+        ),
+      );
+    }
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
@@ -294,6 +331,10 @@ class _MyHomePageState extends State<MyHomePage> {
         title: Text(widget.title),
         actions: [
           IconButton(icon: const Icon(Icons.settings), onPressed: _editServer),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () => FirebaseAuth.instance.signOut(),
+          ),
         ],
       ),
       body: _images.isEmpty
