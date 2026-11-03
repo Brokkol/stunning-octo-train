@@ -210,6 +210,44 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
+  Widget _buildTile(dynamic img) {
+    final status = img['status'];
+
+    if (status == 'done') {
+      return GestureDetector(
+        onTap: () => _openImage(img),
+        child: Image.network(
+          '$_baseUrl/images/${img['id']}/thumbnail',
+          headers: _headers,
+          fit: BoxFit.cover,
+          loadingBuilder: (context, child, progress) {
+            if (progress == null) return child;
+            return const Center(
+              child: CircularProgressIndicator(strokeWidth: 2),
+            );
+          },
+          errorBuilder: (context, error, stack) =>
+              const Center(child: Icon(Icons.broken_image)),
+        ),
+      );
+    }
+
+    if (status == 'failed') {
+      return Container(
+        color: Colors.red.shade50,
+        child: const Center(
+          child: Icon(Icons.error_outline, color: Colors.red),
+        ),
+      );
+    }
+
+    // pending: worker ещё делает превью
+    return Container(
+      color: Colors.grey.shade200,
+      child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+    );
+  }
+
   Future<void> _downloadOriginal(dynamic img) async {
     final url = Uri.parse('$_baseUrl/images/${img['id']}/original');
     await launchUrl(url, mode: LaunchMode.externalApplication);
@@ -266,27 +304,18 @@ class _MyHomePageState extends State<MyHomePage> {
               ),
             )
           : GridView.builder(
+              padding: const EdgeInsets.all(8),
               itemCount: _images.length,
               itemBuilder: (context, i) {
-                final img = _images[i];
-                if (img['status'] == 'done') {
-                  return GestureDetector(
-                    onTap: () => _openImage(img),
-                    child: Image.network(
-                      '$_baseUrl/images/${img['id']}/thumbnail',
-                      headers: _headers,
-                      fit: BoxFit.cover,
-                    ),
-                  );
-                } else {
-                  return ListTile(
-                    title: Text(img['id']),
-                    subtitle: Text(img['status']),
-                  );
-                }
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: _buildTile(_images[i]),
+                );
               },
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 3,
+                mainAxisSpacing: 8,
+                crossAxisSpacing: 8,
               ),
             ),
       floatingActionButton: FloatingActionButton(
