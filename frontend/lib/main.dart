@@ -78,13 +78,15 @@ class ImageViewer extends StatelessWidget {
 class _MyHomePageState extends State<MyHomePage> {
   List<dynamic> _images = [];
   User? _user;
+  String? _token;
   StreamSubscription<User?>? _authSub;
   Timer? _timer;
   String _baseUrl = '';
 
-  Map<String, String> get _headers =>
-      (!kIsWeb && _baseUrl.startsWith('https')) ? _authHeaders : const {};
-
+  Map<String, String> get _headers => {
+    if (!kIsWeb && _baseUrl.startsWith('https')) ..._authHeaders,
+    if (_token != null) 'Authorization': 'Bearer $_token',
+  };
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     final saved = (kIsWeb && kReleaseMode)
@@ -133,8 +135,13 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void initState() {
     super.initState();
-    _authSub = FirebaseAuth.instance.authStateChanges().listen((u) {
-      setState(() => _user = u);
+    _authSub = FirebaseAuth.instance.idTokenChanges().listen((u) async {
+      final token = await u?.getIdToken();
+      if (!mounted) return;
+      setState(() {
+        _user = u;
+        _token = token;
+      });
     });
     _loadSettings().then((_) => _loadImages());
     _timer = Timer.periodic(const Duration(seconds: 3), (_) => _loadImages());
