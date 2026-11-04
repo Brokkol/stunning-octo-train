@@ -7,9 +7,9 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"mime"
 	"net/http"
 	"os"
-	"mime"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -45,6 +45,11 @@ func main() {
 	imageRepo := repository.NewMongoImageRepository(db.MongoDB)
 	cacheRepo := repository.NewRedisCacheRepository(db.RedisClient)
 
+	authMW, err := NewAuth(os.Getenv("FIREBASE_PROJECT_ID"))
+
+	if err != nil {
+		log.Fatal("auth init error: ", err)
+	}
 	http.HandleFunc("POST /users", func(w http.ResponseWriter, r *http.Request) {
 		var user domain.User
 		err := json.NewDecoder(r.Body).Decode(&user)
@@ -214,7 +219,7 @@ func main() {
 
 	http.Handle("GET /metrics", promhttp.Handler())
 	log.Println("Server running on port 8080...")
-	log.Fatal(http.ListenAndServe(":8080", Logs(http.DefaultServeMux)))
+	log.Fatal(http.ListenAndServe(":8080", Logs(authMW(http.DefaultServeMux))))
 }
 
 type statusRecorder struct {
