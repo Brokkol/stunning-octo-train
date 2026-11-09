@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -80,7 +81,8 @@ class _MyHomePageState extends State<MyHomePage> {
   User? _user;
   String? _token;
   StreamSubscription<User?>? _authSub;
-  Timer? _timer;
+  WebSocketChannel? _channel;
+  Timer? _reconnectTimer;
   String _baseUrl = '';
 
   Map<String, String> get _headers => {
@@ -142,21 +144,59 @@ class _MyHomePageState extends State<MyHomePage> {
         _user = u;
         _token = token;
       });
+      if (token == null) {
+        _disconnectWs();
+      } else {
+        _connectWs();
+        _loadImages();
+      }
     });
-    _loadSettings().then((_) => _loadImages());
-    _timer = Timer.periodic(const Duration(seconds: 3), (_) => _loadImages());
+    _loadSettings().then((_) {
+      _loadImages();
+      _connectWs();
+    });
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _disconnectWs();
     _authSub?.cancel();
     super.dispose();
   }
 
+  void _connectWs() {
+    if (_channel != null || _token == null || _baseUrl.isEmpty) return;
+    final url = '${_baseUrl.replaceFirst('http', 'ws')}/ws?token=$_token';
+    final channel = WebSocketChannel.connect(Uri.parse(url));
+    _channel = channel;
+    channel.stream.listen(
+      (_) => _loadImages(),
+      onDone: () {
+        if (_channel == channel) _scheduleReconnect();
+      },
+      onError: (_) {
+        if (_channel == channel) _scheduleReconnect();
+      },
+    );
+    _loadImages(); // подхватить то, что могли пропустить
+  }
+
+  void _scheduleReconnect() {
+    _channel = null;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(const Duration(seconds: 5), _connectWs);
+  }
+
+  void _disconnectWs() {
+    final channel = _channel;
+    _channel = null;
+    _reconnectTimer?.cancel();
+    channel?.sink.close();
+  }
+
   Future<void> _loadImages() async {
     if (_baseUrl.isEmpty) return;
-
+    if (_token == null) return; // не вошли: нечего спрашивать
     try {
       final response = await http.get(
         Uri.parse('$_baseUrl/images'),
@@ -314,6 +354,8 @@ class _MyHomePageState extends State<MyHomePage> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('base_url', url);
     setState(() => _baseUrl = url);
+    _disconnectWs();
+    _connectWs();
     _loadImages();
   }
 

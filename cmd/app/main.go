@@ -14,6 +14,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"bufio"
+	"net"
+	"context"
 
 	"Go_project/internal/broker"
 	"Go_project/internal/domain"
@@ -216,6 +219,15 @@ func main() {
 		}
 		sendFileFromS3(w, s3Client, image.ViewKey)
 	})
+		hub := NewHub()
+	go hub.PingLoop()
+	go func() {
+		sub := db.RedisClient.Subscribe(context.Background(), "image_events")
+		for msg := range sub.Channel() {
+			hub.Broadcast([]byte(msg.Payload))
+		}
+	}()
+	http.HandleFunc("GET /ws", hub.ServeWS)
 
 	http.Handle("GET /metrics", promhttp.Handler())
 	log.Println("Server running on port 8080...")
@@ -230,6 +242,9 @@ type statusRecorder struct {
 func (s *statusRecorder) WriteHeader(code int) {
 	s.status = code
 	s.ResponseWriter.WriteHeader(code)
+}
+func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return s.ResponseWriter.(http.Hijacker).Hijack()
 }
 
 var httpRequests = promauto.NewCounterVec(prometheus.CounterOpts{

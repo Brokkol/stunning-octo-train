@@ -44,6 +44,11 @@ func NewAuth(projectID string) (func(http.Handler) http.Handler, error) {
 			}
 
 			tokenStr, found := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+			if !found && r.URL.Path == "/ws" {
+				// браузер не умеет класть заголовок в WebSocket
+				tokenStr = r.URL.Query().Get("token")
+				found = tokenStr != ""
+			}
 			if !found || tokenStr == "" {
 				http.Error(w, "missing token", http.StatusUnauthorized)
 				return
