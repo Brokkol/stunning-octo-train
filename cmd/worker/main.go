@@ -93,7 +93,7 @@ func main() {
 		if err != nil {
 			status = "failed"
 		}
-		event, _ := json.Marshal(map[string]string{"image_id": task.ImageID, "status": status})
+		event, _ := json.Marshal(map[string]string{"image_id": task.ImageID, "status": status, "owner_uid": task.OwnerUID})
 		db.RedisClient.Publish(context.Background(), "image_events", event)
 
 		// Говорим RabbitMQ, что задача обработана и её можно удалить из очереди

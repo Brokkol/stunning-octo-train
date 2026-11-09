@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -8,15 +10,13 @@ import (
 	"log"
 	"log/slog"
 	"mime"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
-	"bufio"
-	"net"
-	"context"
 
 	"Go_project/internal/broker"
 	"Go_project/internal/domain"
@@ -118,12 +118,14 @@ func main() {
 		}
 
 		// Придумываем id и имя файла в S3
+		user, _ := UserFromContext(r.Context())
 		id := bson.NewObjectID().Hex()
 		image := domain.Image{
 			ID:          id,
 			Filename:    header.Filename,
 			OriginalKey: "originals/" + id + ext,
 			Status:      "pending",
+			OwnerUID:    user.UID,
 		}
 
 		// Кладём файл в S3
@@ -148,7 +150,7 @@ func main() {
 		}
 
 		// Отправляем задачу через RabbitMQ
-		task, _ := json.Marshal(domain.ImageTask{ImageID: id, RequestID: r.Header.Get("X-Request-ID")})
+		task, _ := json.Marshal(domain.ImageTask{ImageID: id, RequestID: r.Header.Get("X-Request-ID"), OwnerUID: user.UID})
 		err = rabbit.Publish(task)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -159,7 +161,8 @@ func main() {
 	})
 
 	http.HandleFunc("GET /images", func(w http.ResponseWriter, r *http.Request) {
-		images, err := imageRepo.List()
+		user, _ := UserFromContext(r.Context())
+		images, err := imageRepo.List(user.UID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -169,8 +172,8 @@ func main() {
 
 	// Узнать статус картинки
 	http.HandleFunc("GET /images/{id}", func(w http.ResponseWriter, r *http.Request) {
-		image, err := imageRepo.GetByID(r.PathValue("id"))
-		if err != nil {
+				image, ok := ownImage(r, imageRepo)
+		if !ok {
 			http.Error(w, "image not found", http.StatusNotFound)
 			return
 		}
@@ -179,8 +182,8 @@ func main() {
 
 	// Скачать оригинал
 	http.HandleFunc("GET /images/{id}/original", func(w http.ResponseWriter, r *http.Request) {
-		image, err := imageRepo.GetByID(r.PathValue("id"))
-		if err != nil {
+				image, ok := ownImage(r, imageRepo)
+		if !ok {
 			http.Error(w, "image not found", http.StatusNotFound)
 			return
 		}
@@ -194,8 +197,8 @@ func main() {
 
 	// Скачать превью
 	http.HandleFunc("GET /images/{id}/thumbnail", func(w http.ResponseWriter, r *http.Request) {
-		image, err := imageRepo.GetByID(r.PathValue("id"))
-		if err != nil {
+				image, ok := ownImage(r, imageRepo)
+		if !ok {
 			http.Error(w, "image not found", http.StatusNotFound)
 			return
 		}
@@ -208,8 +211,8 @@ func main() {
 
 	// Версия для просмотра (JPEG до 1600 px)
 	http.HandleFunc("GET /images/{id}/view", func(w http.ResponseWriter, r *http.Request) {
-		image, err := imageRepo.GetByID(r.PathValue("id"))
-		if err != nil {
+				image, ok := ownImage(r, imageRepo)
+		if !ok {
 			http.Error(w, "image not found", http.StatusNotFound)
 			return
 		}
@@ -219,12 +222,18 @@ func main() {
 		}
 		sendFileFromS3(w, s3Client, image.ViewKey)
 	})
-		hub := NewHub()
+	hub := NewHub()
 	go hub.PingLoop()
 	go func() {
 		sub := db.RedisClient.Subscribe(context.Background(), "image_events")
 		for msg := range sub.Channel() {
-			hub.Broadcast([]byte(msg.Payload))
+			var ev struct {
+				OwnerUID string `json:"owner_uid"`
+			}
+			if json.Unmarshal([]byte(msg.Payload), &ev) != nil {
+				continue
+			}
+			hub.Broadcast(ev.OwnerUID, []byte(msg.Payload))
 		}
 	}()
 	http.HandleFunc("GET /ws", hub.ServeWS)
@@ -283,6 +292,19 @@ func Logs(next http.Handler) http.Handler {
 func sendJSON(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(data)
+}
+
+// ownImage берёт картинку по id из адреса и проверяет, что она принадлежит тому, кто спрашивает
+func ownImage(r *http.Request, repo *repository.MongoImageRepository) (*domain.Image, bool) {
+	user, ok := UserFromContext(r.Context())
+	if !ok {
+		return nil, false
+	}
+	image, err := repo.GetByID(r.PathValue("id"))
+	if err != nil || image.OwnerUID != user.UID {
+		return nil, false
+	}
+	return image, true
 }
 
 // sendFileFromS3 скачивает файл из S3 и сразу отдаёт его клиенту

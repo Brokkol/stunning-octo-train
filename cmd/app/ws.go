@@ -16,16 +16,16 @@ var upgrader = websocket.Upgrader{
 // Hub хранит все открытые соединения и рассылает им сообщения
 type Hub struct {
 	mu      sync.Mutex
-	clients map[*websocket.Conn]bool
+	clients map[*websocket.Conn]string // соединение -> uid владельца
 }
 
 func NewHub() *Hub {
-	return &Hub{clients: map[*websocket.Conn]bool{}}
+	return &Hub{clients: map[*websocket.Conn]string{}}
 }
 
-func (h *Hub) add(c *websocket.Conn) {
+func (h *Hub) add(c *websocket.Conn, uid string) {
 	h.mu.Lock()
-	h.clients[c] = true
+	h.clients[c] = uid
 	h.mu.Unlock()
 }
 
@@ -37,10 +37,13 @@ func (h *Hub) remove(c *websocket.Conn) {
 }
 
 // Broadcast отправляет сообщение всем подключённым
-func (h *Hub) Broadcast(msg []byte) {
+func (h *Hub) Broadcast(uid string, msg []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for c := range h.clients {
+	for c, owner := range h.clients {
+		if owner != uid {
+			continue
+		}
 		c.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		if err := c.WriteMessage(websocket.TextMessage, msg); err != nil {
 			c.Close()
@@ -67,11 +70,16 @@ func (h *Hub) PingLoop() {
 
 // ServeWS превращает обычный запрос в WebSocket и держит его открытым
 func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
+	user, ok := UserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
-	h.add(conn)
+	h.add(conn, user.UID)
 	defer h.remove(conn)
 
 	// Читаем, только чтобы заметить, что клиент отключился

@@ -43,11 +43,11 @@ func (r *MongoImageRepository) Update(img *domain.Image) error {
 }
 
 // List возвращает все картинки, новые сверху
-func (r *MongoImageRepository) List() ([]domain.Image, error) {
+func (r *MongoImageRepository) List(ownerUID string) ([]domain.Image, error) {
 	// Сортируем по _id в обратном порядке: в ObjectID зашито время создания
 	opts := options.Find().SetSort(bson.M{"_id": -1})
 
-	cursor, err := r.collection.Find(context.Background(), bson.M{}, opts)
+	cursor, err := r.collection.Find(context.Background(), bson.M{"owner_uid": ownerUID}, opts)
 	if err != nil {
 		return nil, err
 	}

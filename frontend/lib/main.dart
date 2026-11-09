@@ -146,6 +146,7 @@ class _MyHomePageState extends State<MyHomePage> {
       });
       if (token == null) {
         _disconnectWs();
+        setState(() => _images = []);
       } else {
         _connectWs();
         _loadImages();
@@ -218,6 +219,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
   Future<void> _signIn() async {
     final provider = GoogleAuthProvider();
+    provider.setCustomParameters({'prompt': 'select_account'});
     try {
       if (kIsWeb) {
         await FirebaseAuth.instance.signInWithPopup(provider);
