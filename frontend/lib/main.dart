@@ -148,6 +148,7 @@ class _MyHomePageState extends State<MyHomePage> {
         _disconnectWs();
         setState(() => _images = []);
       } else {
+        _registerUser();
         _connectWs();
         _loadImages();
       }
@@ -193,6 +194,15 @@ class _MyHomePageState extends State<MyHomePage> {
     _channel = null;
     _reconnectTimer?.cancel();
     channel?.sink.close();
+  }
+
+    Future<void> _registerUser() async {
+    if (_baseUrl.isEmpty || _token == null) return;
+    try {
+      await http.get(Uri.parse('$_baseUrl/me'), headers: _headers);
+    } catch (e) {
+      debugPrint('me error: $e');
+    }
   }
 
   Future<void> _loadImages() async {

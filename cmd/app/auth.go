@@ -20,6 +20,7 @@ const userCtxKey ctxKey = "user"
 type AuthUser struct {
 	UID   string
 	Email string
+	Name  string
 }
 
 // UserFromContext достаёт пользователя, которого туда положил Auth
@@ -69,12 +70,13 @@ func NewAuth(projectID string) (func(http.Handler) http.Handler, error) {
 			claims, _ := token.Claims.(jwt.MapClaims)
 			uid, _ := claims["sub"].(string)
 			email, _ := claims["email"].(string)
+			name, _ := claims["name"].(string)
 			if uid == "" {
 				http.Error(w, "invalid token", http.StatusUnauthorized)
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), userCtxKey, AuthUser{UID: uid, Email: email})
+			ctx := context.WithValue(r.Context(), userCtxKey, AuthUser{UID: uid, Email: email, Name: name})
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}, nil

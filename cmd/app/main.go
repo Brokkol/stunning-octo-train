@@ -93,6 +93,20 @@ func main() {
 		sendJSON(w, user)
 	})
 
+		http.HandleFunc("GET /me", func(w http.ResponseWriter, r *http.Request) {
+		authUser, ok := UserFromContext(r.Context())
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		user, err := userRepo.Upsert(authUser.UID, authUser.Name, authUser.Email)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		sendJSON(w, user)
+	})
+	
 	http.HandleFunc("GET /hits", func(w http.ResponseWriter, r *http.Request) {
 		count, err := cacheRepo.IncrementCounter("api_hits")
 		if err != nil {

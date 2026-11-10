@@ -8,6 +8,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 type MongoUserRepository struct {
@@ -51,5 +52,24 @@ func (r *MongoUserRepository) GetByID(id string) (*domain.User, error) {
 		return nil, err
 	}
 
+	return &user, nil
+}
+// Upsert: при первом входе создаёт пользователя, потом только обновляет имя, почту и время входа
+func (r *MongoUserRepository) Upsert(uid, name, email string) (*domain.User, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	now := time.Now().UTC()
+	update := bson.M{
+		"$set":         bson.M{"name": name, "email": email, "last_login_at": now},
+		"$setOnInsert": bson.M{"created_at": now}, // только при создании
+	}
+	opts := options.FindOneAndUpdate().SetUpsert(true).SetReturnDocument(options.After)
+
+	var user domain.User
+	err := r.collection.FindOneAndUpdate(ctx, bson.M{"_id": uid}, update, opts).Decode(&user)
+	if err != nil {
+		return nil, err
+	}
 	return &user, nil
 }
