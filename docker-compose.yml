@@ -17,6 +17,7 @@ services:
       - AWS_ACCESS_KEY_ID=local
       - AWS_SECRET_ACCESS_KEY=local
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - FIREBASE_PROJECT_ID=mini-imgur-c1c68
     depends_on:
       - mongo
       - redis

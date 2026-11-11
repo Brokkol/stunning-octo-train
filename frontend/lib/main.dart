@@ -6,8 +6,14 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
+import "package:flutter/services.dart";
+import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+
+import 'firebase_options.dart';
 
 const _cfId = String.fromEnvironment('CF_ID');
 const _cfSecret = String.fromEnvironment('CF_SECRET');
@@ -18,7 +24,9 @@ const _authHeaders = {
   'CF-Access-Client-Secret': _cfSecret,
 };
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(const MyApp());
 }
 
@@ -71,12 +79,17 @@ class ImageViewer extends StatelessWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   List<dynamic> _images = [];
-  Timer? _timer;
+  User? _user;
+  String? _token;
+  StreamSubscription<User?>? _authSub;
+  WebSocketChannel? _channel;
+  Timer? _reconnectTimer;
   String _baseUrl = '';
 
-  Map<String, String> get _headers =>
-      (!kIsWeb && _baseUrl.startsWith('https')) ? _authHeaders : const {};
-
+  Map<String, String> get _headers => {
+    if (!kIsWeb && _baseUrl.startsWith('https')) ..._authHeaders,
+    if (_token != null) 'Authorization': 'Bearer $_token',
+  };
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     final saved = (kIsWeb && kReleaseMode)
@@ -125,19 +138,77 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void initState() {
     super.initState();
-    _loadSettings().then((_) => _loadImages());
-    _timer = Timer.periodic(const Duration(seconds: 3), (_) => _loadImages());
+    _authSub = FirebaseAuth.instance.idTokenChanges().listen((u) async {
+      final token = await u?.getIdToken();
+      if (!mounted) return;
+      setState(() {
+        _user = u;
+        _token = token;
+      });
+      if (token == null) {
+        _disconnectWs();
+        setState(() => _images = []);
+      } else {
+        _registerUser();
+        _connectWs();
+        _loadImages();
+      }
+    });
+    _loadSettings().then((_) {
+      _loadImages();
+      _connectWs();
+    });
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _disconnectWs();
+    _authSub?.cancel();
     super.dispose();
+  }
+
+  void _connectWs() {
+    if (_channel != null || _token == null || _baseUrl.isEmpty) return;
+    final url = '${_baseUrl.replaceFirst('http', 'ws')}/ws?token=$_token';
+    final channel = WebSocketChannel.connect(Uri.parse(url));
+    _channel = channel;
+    channel.stream.listen(
+      (_) => _loadImages(),
+      onDone: () {
+        if (_channel == channel) _scheduleReconnect();
+      },
+      onError: (_) {
+        if (_channel == channel) _scheduleReconnect();
+      },
+    );
+    _loadImages(); // подхватить то, что могли пропустить
+  }
+
+  void _scheduleReconnect() {
+    _channel = null;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(const Duration(seconds: 5), _connectWs);
+  }
+
+  void _disconnectWs() {
+    final channel = _channel;
+    _channel = null;
+    _reconnectTimer?.cancel();
+    channel?.sink.close();
+  }
+
+    Future<void> _registerUser() async {
+    if (_baseUrl.isEmpty || _token == null) return;
+    try {
+      await http.get(Uri.parse('$_baseUrl/me'), headers: _headers);
+    } catch (e) {
+      debugPrint('me error: $e');
+    }
   }
 
   Future<void> _loadImages() async {
     if (_baseUrl.isEmpty) return;
-
+    if (_token == null) return; // не вошли: нечего спрашивать
     try {
       final response = await http.get(
         Uri.parse('$_baseUrl/images'),
@@ -154,6 +225,20 @@ class _MyHomePageState extends State<MyHomePage> {
       });
     } catch (e) {
       debugPrint('load error: $e');
+    }
+  }
+
+  Future<void> _signIn() async {
+    final provider = GoogleAuthProvider();
+    provider.setCustomParameters({'prompt': 'select_account'});
+    try {
+      if (kIsWeb) {
+        await FirebaseAuth.instance.signInWithPopup(provider);
+      } else {
+        await FirebaseAuth.instance.signInWithProvider(provider);
+      }
+    } catch (e) {
+      debugPrint('sign in error: $e');
     }
   }
 
@@ -282,11 +367,25 @@ class _MyHomePageState extends State<MyHomePage> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('base_url', url);
     setState(() => _baseUrl = url);
+    _disconnectWs();
+    _connectWs();
     _loadImages();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_user == null) {
+      return Scaffold(
+        appBar: AppBar(title: Text(widget.title)),
+        body: Center(
+          child: FilledButton.icon(
+            icon: const Icon(Icons.login),
+            label: const Text('Войти через Google'),
+            onPressed: _signIn,
+          ),
+        ),
+      );
+    }
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
@@ -294,6 +393,17 @@ class _MyHomePageState extends State<MyHomePage> {
         title: Text(widget.title),
         actions: [
           IconButton(icon: const Icon(Icons.settings), onPressed: _editServer),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () => FirebaseAuth.instance.signOut(),
+          ),
+          if (kDebugMode)
+            IconButton(
+              icon: const Icon(Icons.key),
+              tooltip: 'Copy token',
+              onPressed: () =>
+                  Clipboard.setData(ClipboardData(text: _token ?? '')),
+            ),
         ],
       ),
       body: _images.isEmpty

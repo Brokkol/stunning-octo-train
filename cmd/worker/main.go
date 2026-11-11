@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"time"
+	"context"
 
 	"Go_project/internal/broker"
 	"Go_project/internal/domain"
@@ -88,6 +89,12 @@ func main() {
 			thumbsTotal.WithLabelValues("done").Inc()
 			slog.Info("done", "request_id", task.RequestID, "image_id", task.ImageID)
 		}
+		status := "done"
+		if err != nil {
+			status = "failed"
+		}
+		event, _ := json.Marshal(map[string]string{"image_id": task.ImageID, "status": status, "owner_uid": task.OwnerUID})
+		db.RedisClient.Publish(context.Background(), "image_events", event)
 
 		// Говорим RabbitMQ, что задача обработана и её можно удалить из очереди
 		msg.Ack(false)

@@ -1,0 +1,46 @@
+{
+  "project_info": {
+    "project_number": "705869653298",
+    "project_id": "mini-imgur-c1c68",
+    "storage_bucket": "mini-imgur-c1c68.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:705869653298:android:0affe18c31cdd50ed6e32b",
+        "android_client_info": {
+          "package_name": "com.example.frontend"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "705869653298-dft33c892uh2itn0qnspr459cmt8k7d0.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCVPrzwOwpGT_4rZq81j7yH5LRccB_5Cog"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "705869653298-dft33c892uh2itn0qnspr459cmt8k7d0.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "705869653298-4g9rlelvuho93rl8pphntvr2o9vh8p7q.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.frontend"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

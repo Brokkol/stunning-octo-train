@@ -9,10 +9,12 @@ type Image struct {
 	ThumbnailKey string `json:"thumbnail_key" bson:"thumbnail_key"`
 	ViewKey      string `json:"view_key" bson:"view_key"`
 	Status       string `json:"status" bson:"status"` // "pending", "done" или "failed"
+	OwnerUID     string `json:"owner_uid" bson:"owner_uid"`
 }
 
 // ImageTask - сообщение, которое API отправляет воркеру через RabbitMQ
 type ImageTask struct {
 	ImageID   string `json:"image_id"`
 	RequestID string `json:"request_id"`
+	OwnerUID  string `json:"owner_uid" bson:"owner_uid"`
 }

@@ -1,15 +1,18 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"io"
 	"log"
 	"log/slog"
+	"mime"
+	"net"
 	"net/http"
 	"os"
-	"mime"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -45,6 +48,11 @@ func main() {
 	imageRepo := repository.NewMongoImageRepository(db.MongoDB)
 	cacheRepo := repository.NewRedisCacheRepository(db.RedisClient)
 
+	authMW, err := NewAuth(os.Getenv("FIREBASE_PROJECT_ID"))
+
+	if err != nil {
+		log.Fatal("auth init error: ", err)
+	}
 	http.HandleFunc("POST /users", func(w http.ResponseWriter, r *http.Request) {
 		var user domain.User
 		err := json.NewDecoder(r.Body).Decode(&user)
@@ -85,6 +93,20 @@ func main() {
 		sendJSON(w, user)
 	})
 
+		http.HandleFunc("GET /me", func(w http.ResponseWriter, r *http.Request) {
+		authUser, ok := UserFromContext(r.Context())
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		user, err := userRepo.Upsert(authUser.UID, authUser.Name, authUser.Email)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		sendJSON(w, user)
+	})
+	
 	http.HandleFunc("GET /hits", func(w http.ResponseWriter, r *http.Request) {
 		count, err := cacheRepo.IncrementCounter("api_hits")
 		if err != nil {
@@ -110,12 +132,14 @@ func main() {
 		}
 
 		// Придумываем id и имя файла в S3
+		user, _ := UserFromContext(r.Context())
 		id := bson.NewObjectID().Hex()
 		image := domain.Image{
 			ID:          id,
 			Filename:    header.Filename,
 			OriginalKey: "originals/" + id + ext,
 			Status:      "pending",
+			OwnerUID:    user.UID,
 		}
 
 		// Кладём файл в S3
@@ -140,7 +164,7 @@ func main() {
 		}
 
 		// Отправляем задачу через RabbitMQ
-		task, _ := json.Marshal(domain.ImageTask{ImageID: id, RequestID: r.Header.Get("X-Request-ID")})
+		task, _ := json.Marshal(domain.ImageTask{ImageID: id, RequestID: r.Header.Get("X-Request-ID"), OwnerUID: user.UID})
 		err = rabbit.Publish(task)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -151,7 +175,8 @@ func main() {
 	})
 
 	http.HandleFunc("GET /images", func(w http.ResponseWriter, r *http.Request) {
-		images, err := imageRepo.List()
+		user, _ := UserFromContext(r.Context())
+		images, err := imageRepo.List(user.UID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -161,8 +186,8 @@ func main() {
 
 	// Узнать статус картинки
 	http.HandleFunc("GET /images/{id}", func(w http.ResponseWriter, r *http.Request) {
-		image, err := imageRepo.GetByID(r.PathValue("id"))
-		if err != nil {
+				image, ok := ownImage(r, imageRepo)
+		if !ok {
 			http.Error(w, "image not found", http.StatusNotFound)
 			return
 		}
@@ -171,8 +196,8 @@ func main() {
 
 	// Скачать оригинал
 	http.HandleFunc("GET /images/{id}/original", func(w http.ResponseWriter, r *http.Request) {
-		image, err := imageRepo.GetByID(r.PathValue("id"))
-		if err != nil {
+				image, ok := ownImage(r, imageRepo)
+		if !ok {
 			http.Error(w, "image not found", http.StatusNotFound)
 			return
 		}
@@ -186,8 +211,8 @@ func main() {
 
 	// Скачать превью
 	http.HandleFunc("GET /images/{id}/thumbnail", func(w http.ResponseWriter, r *http.Request) {
-		image, err := imageRepo.GetByID(r.PathValue("id"))
-		if err != nil {
+				image, ok := ownImage(r, imageRepo)
+		if !ok {
 			http.Error(w, "image not found", http.StatusNotFound)
 			return
 		}
@@ -200,8 +225,8 @@ func main() {
 
 	// Версия для просмотра (JPEG до 1600 px)
 	http.HandleFunc("GET /images/{id}/view", func(w http.ResponseWriter, r *http.Request) {
-		image, err := imageRepo.GetByID(r.PathValue("id"))
-		if err != nil {
+				image, ok := ownImage(r, imageRepo)
+		if !ok {
 			http.Error(w, "image not found", http.StatusNotFound)
 			return
 		}
@@ -211,10 +236,25 @@ func main() {
 		}
 		sendFileFromS3(w, s3Client, image.ViewKey)
 	})
+	hub := NewHub()
+	go hub.PingLoop()
+	go func() {
+		sub := db.RedisClient.Subscribe(context.Background(), "image_events")
+		for msg := range sub.Channel() {
+			var ev struct {
+				OwnerUID string `json:"owner_uid"`
+			}
+			if json.Unmarshal([]byte(msg.Payload), &ev) != nil {
+				continue
+			}
+			hub.Broadcast(ev.OwnerUID, []byte(msg.Payload))
+		}
+	}()
+	http.HandleFunc("GET /ws", hub.ServeWS)
 
 	http.Handle("GET /metrics", promhttp.Handler())
 	log.Println("Server running on port 8080...")
-	log.Fatal(http.ListenAndServe(":8080", Logs(http.DefaultServeMux)))
+	log.Fatal(http.ListenAndServe(":8080", Logs(authMW(http.DefaultServeMux))))
 }
 
 type statusRecorder struct {
@@ -225,6 +265,9 @@ type statusRecorder struct {
 func (s *statusRecorder) WriteHeader(code int) {
 	s.status = code
 	s.ResponseWriter.WriteHeader(code)
+}
+func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return s.ResponseWriter.(http.Hijacker).Hijack()
 }
 
 var httpRequests = promauto.NewCounterVec(prometheus.CounterOpts{
@@ -263,6 +306,19 @@ func Logs(next http.Handler) http.Handler {
 func sendJSON(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(data)
+}
+
+// ownImage берёт картинку по id из адреса и проверяет, что она принадлежит тому, кто спрашивает
+func ownImage(r *http.Request, repo *repository.MongoImageRepository) (*domain.Image, bool) {
+	user, ok := UserFromContext(r.Context())
+	if !ok {
+		return nil, false
+	}
+	image, err := repo.GetByID(r.PathValue("id"))
+	if err != nil || image.OwnerUID != user.UID {
+		return nil, false
+	}
+	return image, true
 }
 
 // sendFileFromS3 скачивает файл из S3 и сразу отдаёт его клиенту
