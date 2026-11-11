@@ -5,6 +5,8 @@ info:
   version: 1.0.0
 servers:
   - url: /
+security:
+  - bearerAuth: []
 
 paths:
   /users:
@@ -51,6 +53,20 @@ paths:
                 $ref: '#/components/schemas/User'
         '404':
           description: Пользователь не найден
+
+  /me:
+    get:
+      tags: [users]
+      summary: Кто я. Создаёт пользователя при первом входе
+      responses:
+        '200':
+          description: Мой профиль
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Нет токена или он недействителен
 
   /hits:
     get:
@@ -191,6 +207,12 @@ components:
     User:
       type: object
       properties:
+        created_at:
+          type: string
+          format: date-time
+        last_login_at:
+          type: string
+          format: date-time
         id:
           type: string
         name:
@@ -214,3 +236,11 @@ components:
         status:
           type: string
           enum: [pending, done, failed]
+        owner_uid:
+          type: string
+          description: uid владельца из Firebase
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

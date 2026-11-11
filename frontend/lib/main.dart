@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
+import "package:flutter/services.dart";
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -396,6 +397,13 @@ class _MyHomePageState extends State<MyHomePage> {
             icon: const Icon(Icons.logout),
             onPressed: () => FirebaseAuth.instance.signOut(),
           ),
+          if (kDebugMode)
+            IconButton(
+              icon: const Icon(Icons.key),
+              tooltip: 'Copy token',
+              onPressed: () =>
+                  Clipboard.setData(ClipboardData(text: _token ?? '')),
+            ),
         ],
       ),
       body: _images.isEmpty
