@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: mini-imgur:${TAG:-dev}
     container_name: go_app
     restart: always
     expose:
@@ -27,9 +28,7 @@ services:
       - app-network
 
   worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: mini-imgur:${TAG:-dev}
     container_name: go_worker
     restart: always
     command: ["./worker"]
@@ -52,9 +51,7 @@ services:
       - app-network
 
   log-dumper:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: mini-imgur:${TAG:-dev}
     container_name: log_dumper
     restart: always
     command: ["./dumper"]
