@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: mini-imgur:${TAG:-dev}
     container_name: go_app
     restart: always
     expose:
@@ -27,9 +28,7 @@ services:
       - app-network
 
   worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: mini-imgur:${TAG:-dev}
     container_name: go_worker
     restart: always
     command: ["./worker"]
@@ -52,9 +51,7 @@ services:
       - app-network
 
   log-dumper:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: mini-imgur:${TAG:-dev}
     container_name: log_dumper
     restart: always
     command: ["./dumper"]
@@ -107,7 +104,30 @@ services:
       - mongo_data:/data/db
     networks:
       - app-network
+
+  mongo-backup:
+    image: mongo:6.0
+    container_name: mongo_backup
+    restart: always
+    depends_on:
+      - mongo
+    entrypoint: ["sh", "/scripts/mongo-backup.sh"]
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./backups:/backups
+    networks:
+      - app-network
     
+  s3-backup:
+    image: alpine:3.20
+    container_name: s3_backup
+    restart: always
+    entrypoint: ["sh", "/scripts/s3-backup.sh"]
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./backups:/backups
+      - s3_data:/s3:ro
+
   zabbix-db:
     image: postgres:16-alpine
     container_name: zabbix-db
