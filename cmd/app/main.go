@@ -252,7 +252,7 @@ func main() {
 		}
 	}()
 	http.HandleFunc("GET /ws", hub.ServeWS)
-	
+
 	promauto.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "users_total",
 		Help: "Сколько пользователей зарегистрировано",
@@ -263,6 +263,18 @@ func main() {
 		}
 		return float64(n)
 	})
+
+	promauto.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "images_total",
+		Help: "Сколько картинок лежит в базе",
+	}, func() float64 {
+		n, err := imageRepo.Count()
+		if err != nil {
+			return math.NaN()
+		}
+		return float64(n)
+	})
+
 	http.Handle("GET /metrics", promhttp.Handler())
 	log.Println("Server running on port 8080...")
 	log.Fatal(http.ListenAndServe(":8080", Logs(authMW(http.DefaultServeMux))))
