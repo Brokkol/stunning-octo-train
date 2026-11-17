@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"math"
 	"mime"
 	"net"
 	"net/http"
@@ -170,7 +171,7 @@ func main() {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-
+		imagesUploaded.WithLabelValues(strings.TrimPrefix(ext, ".")).Inc()
 		sendJSON(w, image)
 	})
 
@@ -251,7 +252,17 @@ func main() {
 		}
 	}()
 	http.HandleFunc("GET /ws", hub.ServeWS)
-
+	
+	promauto.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "users_total",
+		Help: "Сколько пользователей зарегистрировано",
+	}, func() float64 {
+		n, err := userRepo.Count()
+		if err != nil {
+			return math.NaN()
+		}
+		return float64(n)
+	})
 	http.Handle("GET /metrics", promhttp.Handler())
 	log.Println("Server running on port 8080...")
 	log.Fatal(http.ListenAndServe(":8080", Logs(authMW(http.DefaultServeMux))))
@@ -269,6 +280,11 @@ func (s *statusRecorder) WriteHeader(code int) {
 func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return s.ResponseWriter.(http.Hijacker).Hijack()
 }
+
+var imagesUploaded = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "images_uploaded_total",
+	Help: "Сколько картинок загружено",
+}, []string{"format"})
 
 var httpRequests = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "http_requests_total",
