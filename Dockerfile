@@ -9,7 +9,7 @@ RUN go mod download
 # Потом весь код
 COPY . .
 
-# Собираем две программы: API и воркер
+# Собираем три программы: API, воркер и выгрузчик логов
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/api ./cmd/app
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/worker ./cmd/worker
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/dumper ./cmd/dumper
@@ -18,7 +18,6 @@ FROM alpine:latest
 
 WORKDIR /app
 
-COPY --from=builder /out/api /out/worker ./
 COPY --from=builder /out/api /out/worker /out/dumper ./
 
 EXPOSE 8080
