@@ -56,3 +56,8 @@ func (r *MongoImageRepository) List(ownerUID string) ([]domain.Image, error) {
 	err = cursor.All(context.Background(), &images)
 	return images, err
 }
+
+// Count возвращает, сколько записей о картинках лежит в базе
+func (r *MongoImageRepository) Count() (int64, error) {
+	return r.collection.CountDocuments(context.Background(), bson.M{})
+}
