@@ -68,6 +68,61 @@ class MyApp extends StatelessWidget {
   }
 }
 
+// Экран входа. Вынесен в отдельный виджет, чтобы его можно было проверить тестом без Firebase.
+class LoginScreen extends StatelessWidget {
+  const LoginScreen({super.key, required this.title, required this.onSignIn});
+
+  final String title;
+  final VoidCallback onSignIn;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: Center(
+        child: FilledButton.icon(
+          icon: const Icon(Icons.login),
+          label: const Text('Войти через Google'),
+          onPressed: onSignIn,
+        ),
+      ),
+    );
+  }
+}
+
+// Переключатель темы: Авто / Светлая / Тёмная.
+class ThemeModeSelector extends StatelessWidget {
+  const ThemeModeSelector({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: themeModeNotifier,
+      builder: (_, mode, _) => SegmentedButton<ThemeMode>(
+        segments: const [
+          ButtonSegment(
+            value: ThemeMode.system,
+            icon: Icon(Icons.brightness_auto),
+            label: Text('Авто'),
+          ),
+          ButtonSegment(
+            value: ThemeMode.light,
+            icon: Icon(Icons.light_mode),
+            label: Text('Светлая'),
+          ),
+          ButtonSegment(
+            value: ThemeMode.dark,
+            icon: Icon(Icons.dark_mode),
+            label: Text('Тёмная'),
+          ),
+        ],
+        selected: {mode},
+        onSelectionChanged: (s) => _setThemeMode(s.first),
+      ),
+    );
+  }
+}
+
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key, required this.title});
 
@@ -394,30 +449,7 @@ class _MyHomePageState extends State<MyHomePage> {
               const SizedBox(height: 8),
               Text('Картинок: ${_images.length}'),
               const SizedBox(height: 16),
-              ValueListenableBuilder<ThemeMode>(
-                valueListenable: themeModeNotifier,
-                builder: (_, mode, _) => SegmentedButton<ThemeMode>(
-                  segments: const [
-                    ButtonSegment(
-                      value: ThemeMode.system,
-                      icon: Icon(Icons.brightness_auto),
-                      label: Text('Авто'),
-                    ),
-                    ButtonSegment(
-                      value: ThemeMode.light,
-                      icon: Icon(Icons.light_mode),
-                      label: Text('Светлая'),
-                    ),
-                    ButtonSegment(
-                      value: ThemeMode.dark,
-                      icon: Icon(Icons.dark_mode),
-                      label: Text('Тёмная'),
-                    ),
-                  ],
-                  selected: {mode},
-                  onSelectionChanged: (s) => _setThemeMode(s.first),
-                ),
-              ),
+              const ThemeModeSelector(),
               const SizedBox(height: 16),
               FilledButton.icon(
                 icon: const Icon(Icons.logout),
@@ -471,16 +503,7 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   Widget build(BuildContext context) {
     if (_user == null) {
-      return Scaffold(
-        appBar: AppBar(title: Text(widget.title)),
-        body: Center(
-          child: FilledButton.icon(
-            icon: const Icon(Icons.login),
-            label: const Text('Войти через Google'),
-            onPressed: _signIn,
-          ),
-        ),
-      );
+      return LoginScreen(title: widget.title, onSignIn: _signIn);
     }
     return Scaffold(
       appBar: AppBar(

@@ -1,30 +1,54 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:frontend/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('экран входа показывает заголовок и кнопку Google', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LoginScreen(title: 'Mini Imgur', onSignIn: () {}),
+      ),
+    );
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    expect(find.text('Mini Imgur'), findsOneWidget);
+    expect(find.text('Войти через Google'), findsOneWidget);
+  });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
+  testWidgets('нажатие на кнопку входа вызывает onSignIn', (
+    WidgetTester tester,
+  ) async {
+    var taps = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LoginScreen(title: 'Mini Imgur', onSignIn: () => taps++),
+      ),
+    );
+
+    await tester.tap(find.text('Войти через Google'));
     await tester.pump();
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(taps, 1);
+  });
+
+  testWidgets('переключатель темы меняет режим и запоминает выбор', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({}); // пустое "хранилище" на время теста
+    themeModeNotifier.value = ThemeMode.system;
+
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: ThemeModeSelector())),
+    );
+
+    await tester.tap(find.text('Тёмная'));
+    await tester.pump();
+
+    expect(themeModeNotifier.value, ThemeMode.dark);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('theme_mode'), 'dark');
   });
 }
