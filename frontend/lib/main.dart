@@ -23,10 +23,24 @@ const _authHeaders = {
   'CF-Access-Client-Id': _cfId,
   'CF-Access-Client-Secret': _cfSecret,
 };
+// Текущий режим темы. За ним следят MaterialApp и панель профиля.
+final themeModeNotifier = ValueNotifier<ThemeMode>(ThemeMode.system);
+
+Future<void> _setThemeMode(ThemeMode mode) async {
+  themeModeNotifier.value = mode; // экран перекрасится сразу
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString('theme_mode', mode.name); // и запомним на потом
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  final prefs = await SharedPreferences.getInstance();
+  final saved = prefs.getString('theme_mode');
+  themeModeNotifier.value = ThemeMode.values.firstWhere(
+    (m) => m.name == saved,
+    orElse: () => ThemeMode.system,
+  );
   runApp(const MyApp());
 }
 
@@ -36,10 +50,20 @@ class MyApp extends StatelessWidget {
   // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'My service',
-      theme: ThemeData(colorScheme: .fromSeed(seedColor: Colors.blue)),
-      home: MyHomePage(title: 'Mini Imgur'),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: themeModeNotifier,
+      builder: (context, mode, _) => MaterialApp(
+        title: 'My service',
+        theme: ThemeData(colorScheme: .fromSeed(seedColor: Colors.blue)),
+        darkTheme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: Colors.blue,
+            brightness: Brightness.dark,
+          ),
+        ),
+        themeMode: mode,
+        home: MyHomePage(title: 'Mini Imgur'),
+      ),
     );
   }
 }
@@ -197,7 +221,7 @@ class _MyHomePageState extends State<MyHomePage> {
     channel?.sink.close();
   }
 
-    Future<void> _registerUser() async {
+  Future<void> _registerUser() async {
     if (_baseUrl.isEmpty || _token == null) return;
     try {
       await http.get(Uri.parse('$_baseUrl/me'), headers: _headers);
@@ -319,16 +343,19 @@ class _MyHomePageState extends State<MyHomePage> {
 
     if (status == 'failed') {
       return Container(
-        color: Colors.red.shade50,
-        child: const Center(
-          child: Icon(Icons.error_outline, color: Colors.red),
+        color: Theme.of(context).colorScheme.errorContainer,
+        child: Center(
+          child: Icon(
+            Icons.error_outline,
+            color: Theme.of(context).colorScheme.error,
+          ),
         ),
       );
     }
 
     // pending: worker ещё делает превью
     return Container(
-      color: Colors.grey.shade200,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
       child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
     );
   }
@@ -336,6 +363,75 @@ class _MyHomePageState extends State<MyHomePage> {
   Future<void> _downloadOriginal(dynamic img) async {
     final url = Uri.parse('$_baseUrl/images/${img['id']}/original');
     await launchUrl(url, mode: LaunchMode.externalApplication);
+  }
+
+  void _showProfile() {
+    final user = _user;
+    if (user == null) return;
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircleAvatar(
+                radius: 36,
+                backgroundImage: user.photoURL != null
+                    ? NetworkImage(user.photoURL!)
+                    : null,
+                child: user.photoURL == null
+                    ? const Icon(Icons.person, size: 36)
+                    : null,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                user.displayName ?? 'Без имени',
+                style: Theme.of(ctx).textTheme.titleLarge,
+              ),
+              Text(user.email ?? ''),
+              const SizedBox(height: 8),
+              Text('Картинок: ${_images.length}'),
+              const SizedBox(height: 16),
+              ValueListenableBuilder<ThemeMode>(
+                valueListenable: themeModeNotifier,
+                builder: (_, mode, _) => SegmentedButton<ThemeMode>(
+                  segments: const [
+                    ButtonSegment(
+                      value: ThemeMode.system,
+                      icon: Icon(Icons.brightness_auto),
+                      label: Text('Авто'),
+                    ),
+                    ButtonSegment(
+                      value: ThemeMode.light,
+                      icon: Icon(Icons.light_mode),
+                      label: Text('Светлая'),
+                    ),
+                    ButtonSegment(
+                      value: ThemeMode.dark,
+                      icon: Icon(Icons.dark_mode),
+                      label: Text('Тёмная'),
+                    ),
+                  ],
+                  selected: {mode},
+                  onSelectionChanged: (s) => _setThemeMode(s.first),
+                ),
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                icon: const Icon(Icons.logout),
+                label: const Text('Выйти'),
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  FirebaseAuth.instance.signOut();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _editServer() async {
@@ -392,11 +488,20 @@ class _MyHomePageState extends State<MyHomePage> {
 
         title: Text(widget.title),
         actions: [
-          IconButton(icon: const Icon(Icons.settings), onPressed: _editServer),
           IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () => FirebaseAuth.instance.signOut(),
+            tooltip: 'Профиль',
+            icon: CircleAvatar(
+              radius: 14,
+              backgroundImage: _user?.photoURL != null
+                  ? NetworkImage(_user!.photoURL!)
+                  : null,
+              child: _user?.photoURL == null
+                  ? const Icon(Icons.person, size: 16)
+                  : null,
+            ),
+            onPressed: _showProfile,
           ),
+          IconButton(icon: const Icon(Icons.settings), onPressed: _editServer),
           if (kDebugMode)
             IconButton(
               icon: const Icon(Icons.key),
@@ -407,10 +512,13 @@ class _MyHomePageState extends State<MyHomePage> {
         ],
       ),
       body: _images.isEmpty
-          ? const Center(
+          ? Center(
               child: Text(
                 'Unfortunately you have no pics at the moment',
-                style: TextStyle(fontSize: 20, color: Colors.indigo),
+                style: TextStyle(
+                  fontSize: 20,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
               ),
             )
           : GridView.builder(
