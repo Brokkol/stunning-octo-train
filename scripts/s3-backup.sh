@@ -3,7 +3,9 @@
 while true; do
   FILE="/backups/s3-$(date +%F-%H%M).tar.gz"
   echo "backup -> $FILE"
-  tar czf "$FILE" -C /s3 .
+  # Без дампов логов: они лежат отдельными томами logs_*, быстро раздувают архив
+  FILES=$(cd /s3 && ls -A | grep -v '^logs_')
+  tar czf "$FILE" -C /s3 $FILES
   RC=$?
   if [ "$RC" -le 1 ]; then   # 1 = файл менялся во время чтения, не авария
     echo "ok"

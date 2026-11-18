@@ -12,6 +12,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 import 'firebase_options.dart';
 
@@ -307,6 +308,8 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
+  bool _googleReady = false;
+
   Future<void> _signIn() async {
     final provider = GoogleAuthProvider();
     provider.setCustomParameters({'prompt': 'select_account'});
@@ -314,7 +317,15 @@ class _MyHomePageState extends State<MyHomePage> {
       if (kIsWeb) {
         await FirebaseAuth.instance.signInWithPopup(provider);
       } else {
-        await FirebaseAuth.instance.signInWithProvider(provider);
+        if (!_googleReady) {
+          await GoogleSignIn.instance.initialize();
+          _googleReady = true;
+        }
+        final account = await GoogleSignIn.instance.authenticate();
+        final idToken = account.authentication.idToken;
+        await FirebaseAuth.instance.signInWithCredential(
+          GoogleAuthProvider.credential(idToken: idToken),
+        );
       }
     } catch (e) {
       debugPrint('sign in error: $e');

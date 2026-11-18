@@ -211,18 +211,7 @@ func main() {
 	})
 
 	// Скачать превью
-	http.HandleFunc("GET /images/{id}/thumbnail", func(w http.ResponseWriter, r *http.Request) {
-				image, ok := ownImage(r, imageRepo)
-		if !ok {
-			http.Error(w, "image not found", http.StatusNotFound)
-			return
-		}
-		if image.Status != "done" {
-			http.Error(w, "thumbnail is not ready, status: "+image.Status, http.StatusNotFound)
-			return
-		}
-		sendFileFromS3(w, s3Client, image.ThumbnailKey)
-	})
+	http.HandleFunc("GET /images/{id}/thumbnail", thumbnailHandler(imageRepo, s3Client))
 
 	// Версия для просмотра (JPEG до 1600 px)
 	http.HandleFunc("GET /images/{id}/view", func(w http.ResponseWriter, r *http.Request) {
@@ -347,6 +336,23 @@ func ownImage(r *http.Request, repo *repository.MongoImageRepository) (*domain.I
 		return nil, false
 	}
 	return image, true
+}
+
+// thumbnailHandler отдаёт превью своей картинки. Пока воркер не закончил (статус не "done"),
+// превью ещё нет, поэтому отвечаем 404. Вынесен из main, чтобы его можно было проверить тестом.
+func thumbnailHandler(repo *repository.MongoImageRepository, s3Client *storage.S3Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		image, ok := ownImage(r, repo)
+		if !ok {
+			http.Error(w, "image not found", http.StatusNotFound)
+			return
+		}
+		if image.Status != "done" {
+			http.Error(w, "thumbnail is not ready, status: "+image.Status, http.StatusNotFound)
+			return
+		}
+		sendFileFromS3(w, s3Client, image.ThumbnailKey)
+	}
 }
 
 // sendFileFromS3 скачивает файл из S3 и сразу отдаёт его клиенту
