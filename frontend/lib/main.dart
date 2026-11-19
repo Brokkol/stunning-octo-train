@@ -235,6 +235,7 @@ class _MyHomePageState extends State<MyHomePage> {
       }
     });
     _loadSettings().then((_) {
+      _registerUser();
       _loadImages();
       _connectWs();
     });
