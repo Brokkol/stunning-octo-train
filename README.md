@@ -20,7 +20,7 @@ Redis используется для кэша пользователей и к�
 - Приложение: `nginx` (раздаёт Flutter web и проксирует API), `app` (Go API), `worker`, `mongo`, `redis`, `s3` (SeaweedFS), `rabbitmq`
 - Метрики: Prometheus, Grafana, redis/mongo/node exporters
 - Логи: Vector -> Logstash -> Elasticsearch -> Kibana, плюс `log-dumper` (складывает логи в S3)
-- Алерты: Zabbix
+- Алерты: Zabbix (диск, память и прочие проблемы сервера) и Logstash (ошибки приложения) шлют сообщения в Telegram
 - Доступ снаружи: `cloudflared` (Cloudflare Tunnel) + Cloudflare Access
 
 ## Как запустить
@@ -28,7 +28,11 @@ Redis используется для кэша пользователей и к�
 1. Создать `.env` рядом с `docker-compose.yml`:
    ```
    TUNNEL_TOKEN=...
+   KIBANA_ENCRYPTION_KEY=...    # секрет, от 32 символов: openssl rand -hex 32
+   TELEGRAM_BOT_TOKEN=...       # токен бота из @BotFather
+   TELEGRAM_CHAT_ID=...         # куда слать алерты (число)
    ```
+   Все значения секретные, `.env` в git не попадает. Пример без значений лежит в `.env.example`.
 2. Запустить:
    ```
    docker compose up -d
@@ -48,6 +52,28 @@ Web: `flutter build web --release`, результат копировать в `
 ## Доступ и безопасность
 
 Всё снаружи закрыто Cloudflare Access: API открывается по сервисному токену (приложение шлёт заголовки `CF-Access-Client-Id` / `CF-Access-Client-Secret`), мониторинг (Grafana, Kibana, Zabbix, Prometheus, RabbitMQ) по почте через App Launcher. Сайт и web-версия работают с того же домена, без заголовков. `/metrics` снаружи закрыт (404).
+
+## Вход через Google (web и Android)
+
+На web вход открывает всплывающее окно (`signInWithPopup`), домен сайта должен быть в Firebase -> Authentication -> Settings -> Authorised domains.
+На Android всплывающее окно не работает, поэтому используется нативный `google_sign_in`: он получает ID-токен и передаёт его в Firebase. Для этого в Firebase нужны отпечатки SHA-1 и SHA-256 ключа, которым подписана сборка, и свежий `google-services.json` после их добавления.
+
+## Метрики и дашборд
+
+Prometheus собирает метрики API и воркера, Grafana рисует их. Свои метрики:
+
+- `users_total` - сколько пользователей зарегистрировано (растёт при первом `GET /me`)
+- `images_total` - сколько картинок в базе
+- `images_uploaded_total{format}` - сколько загружено, по форматам
+- `http_requests_total` и `http_request_duration_seconds` - запросы и время ответа по маршрутам
+
+Дашборд "Mini Imgur" лежит в `grafana/dashboard.json`. Импорт: Grafana -> Dashboards -> Import -> загрузить файл (при том же uid старый дашборд перезапишется). Дашборды для Mongo, Redis и сервера импортированы с grafana.com. Источники данных подключаются сами (`grafana/provisioning/datasources/`).
+
+## Алерты
+
+- **Zabbix -> Telegram.** Тип уведомления Telegram включён с токеном бота, у пользователя Admin добавлен Telegram с chat id, правило "Send problems to Telegram" (Alerts -> Actions) шлёт проблемы. Проверка: временно занизить порог диска `{$VFS.FS.PUSED.MAX.WARN}` на хосте, потом вернуть.
+- **Ошибки приложения -> Telegram.** Приложение пишет логи в JSON (`slog`), они идут Vector -> Logstash. В `logstash/pipeline.conf` строки с `level == "ERROR"` дополнительно отправляются в Telegram через выход `http`. Токен и chat id берутся из `.env`. Проверка (изнутри сети Docker): `docker compose exec logstash bash -c "echo '{\"level\":\"ERROR\",\"msg\":\"test\"}' > /dev/tcp/127.0.0.1/5044"`.
+- Kibana: для Rules и Connectors нужен ключ шифрования (`KIBANA_ENCRYPTION_KEY`). Коннектор Webhook в Kibana платный, поэтому алерты на ошибки сделаны через Logstash.
 
 ## Что умеет API
 
@@ -81,6 +107,9 @@ HEIC декодируется на чистом Go (`gen2brain/heic`), CGO не 
 
 ## Что не доделано
 
+- В nginx нет заголовков `Cache-Control` (`no-cache` для сайта, `no-store` для API), и в Cloudflare не включено "Respect Existing Headers": после обновления браузер и Cloudflare могут показывать старую версию. После `git pull` на сервере: `docker compose up -d --force-recreate nginx`.
+- Дашборд Grafana загружается руками (Import), а не из репозитория автоматически.
+- Вход на Android с новой сборкой надо проверить на телефоне.
 - Нет удаления картинок, удалял руками через mongosh.
 - Если RabbitMQ перезапустится, API теряет соединение, помогает `docker compose restart app worker`. Надо сделать переподключение.
 - У запросов к Mongo нет таймаутов (`context.WithTimeout`), и у `http.Server` нет graceful shutdown.

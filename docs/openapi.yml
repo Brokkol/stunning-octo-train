@@ -188,6 +188,39 @@ paths:
         '404':
           description: Картинки нет или версия ещё не готова
 
+  /ws:
+    get:
+      tags: [system]
+      summary: WebSocket, сервер сообщает, что миниатюра готова
+      description: >
+        Токен Firebase передаётся в параметре ?token=, потому что браузер
+        не умеет ставить заголовки на WebSocket. В Swagger UI кнопка
+        Try it out для этого адреса не работает.
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '101':
+          description: Соединение переключено на WebSocket
+        '401':
+          description: Нет токена или он недействителен
+
+  /metrics:
+    get:
+      tags: [system]
+      summary: Метрики Prometheus (текстовый формат)
+      security: []
+      responses:
+        '200':
+          description: Список метрик
+          content:
+            text/plain:
+              schema:
+                type: string
+
 components:
   parameters:
     ImageId:
