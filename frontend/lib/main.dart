@@ -13,6 +13,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:firebase_analytics/firebase_analytics.dart';
 
 import 'firebase_options.dart';
 
@@ -206,6 +207,10 @@ class _MyHomePageState extends State<MyHomePage> {
     try {
       final response = await request.send();
       if (response.statusCode == 200 || response.statusCode == 201) {
+        FirebaseAnalytics.instance.logEvent(
+          name: 'image_upload',
+          parameters: {'format': file.extension ?? 'unknown'},
+        );
         _loadImages();
       } else {
         debugPrint('upload failed: ${response.statusCode}');
@@ -328,6 +333,7 @@ class _MyHomePageState extends State<MyHomePage> {
           GoogleAuthProvider.credential(idToken: idToken),
         );
       }
+      await FirebaseAnalytics.instance.logLogin(loginMethod: 'google');
     } catch (e) {
       debugPrint('sign in error: $e');
     }
